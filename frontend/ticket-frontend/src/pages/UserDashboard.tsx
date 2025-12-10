@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import type { FormEvent } from "react";
+import { PanelLeft } from "lucide-react";
 
 interface UserDashboardProps {
   token: string;
@@ -9,12 +10,17 @@ interface Ticket {
   id: string;
   number: number;
   title: string;
+  description?: string;
   status: string;
   priority: string;
   feedback_score?: number | null;
   technician?: {
     full_name: string;
     profile_photo_url?: string | null;
+  } | null;
+  creator?: {
+    full_name: string;
+    email: string;
   } | null;
   created_at: string;
   assigned_at?: string | null;
@@ -356,9 +362,15 @@ function UserDashboard({ token: tokenProp }: UserDashboardProps) {
     }
   }
 
-  const opened = tickets.filter((t) => t.status !== "cloture" && t.status !== "resolu" && t.status !== "rejete").length;
-  const inProgress = tickets.filter((t) => t.status === "en_cours" || t.status === "assigne_technicien").length;
-  const resolved = tickets.filter((t) => t.status === "resolu" || t.status === "cloture").length;
+  // Compteurs pour chaque statut
+  const statusCounts = {
+    en_attente_analyse: tickets.filter((t) => t.status === "en_attente_analyse").length,
+    assigne_technicien: tickets.filter((t) => t.status === "assigne_technicien").length,
+    en_cours: tickets.filter((t) => t.status === "en_cours").length,
+    resolu: tickets.filter((t) => t.status === "resolu").length,
+    rejete: tickets.filter((t) => t.status === "rejete").length,
+    cloture: tickets.filter((t) => t.status === "cloture").length,
+  };
 
   function formatDate(dateString: string | null | undefined): string {
     if (!dateString) return "N/A";
@@ -380,45 +392,219 @@ function UserDashboard({ token: tokenProp }: UserDashboardProps) {
   const [activeSection, setActiveSection] = useState<string>("dashboard");
   const ticketsListRef = useRef<HTMLDivElement>(null);
   const [userInfo, setUserInfo] = useState<{ full_name: string } | null>(null);
+  const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
+  const [searchFilter, setSearchFilter] = useState<string>("");
+  const [selectedCharacteristic, setSelectedCharacteristic] = useState<string>("");
+  const [selectedFilterValue, setSelectedFilterValue] = useState<string>("");
+
+
+  // Fonction pour naviguer vers une section de statut
+  function handleStatusClick(status: string) {
+    setSelectedStatus(status);
+    setActiveSection("tickets-by-status");
+    setSearchFilter("");
+    setSelectedCharacteristic("");
+    setSelectedFilterValue("");
+    // Scroll vers le haut pour voir la section de filtrage
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+
+  // Fonction pour obtenir les valeurs uniques selon la caractéristique, en respectant les filtres déjà appliqués
+  function getUniqueValues(characteristic: string, currentStatus?: string | null, currentFilterValue?: string, currentChar?: string): string[] {
+    const values = new Set<string>();
+    
+    // Utiliser les paramètres passés ou les états actuels
+    const statusToUse = currentStatus !== undefined ? currentStatus : selectedStatus;
+    const filterValueToUse = currentFilterValue !== undefined ? currentFilterValue : selectedFilterValue;
+    const charToUse = currentChar !== undefined ? currentChar : selectedCharacteristic;
+    
+    // D'abord, filtrer les tickets selon les filtres déjà appliqués
+    let filteredTickets = tickets;
+    
+    // Si on est arrivé depuis le dashboard avec un statut sélectionné, on filtre toujours par ce statut
+    // même si on change de caractéristique
+    if (statusToUse) {
+      filteredTickets = filteredTickets.filter(t => t.status === statusToUse);
+    }
+    
+    // Si un filtre est déjà sélectionné pour une autre caractéristique, on l'applique
+    if (filterValueToUse && charToUse !== characteristic && charToUse !== "statut") {
+      // Appliquer le filtre d'une autre caractéristique
+      filteredTickets = filteredTickets.filter((t) => {
+        switch (charToUse) {
+          case "id":
+            return t.number.toString() === filterValueToUse;
+          case "titre":
+            return t.title.toLowerCase().includes(filterValueToUse.toLowerCase());
+          case "description":
+            return t.description?.toLowerCase().includes(filterValueToUse.toLowerCase()) || false;
+          case "statut":
+            return t.status === filterValueToUse;
+          case "priorite":
+            return t.priority === filterValueToUse;
+          case "demandeur":
+            return t.creator?.full_name === filterValueToUse;
+          case "technicien":
+            return t.technician?.full_name === filterValueToUse;
+          default:
+            return true;
+        }
+      });
+    }
+    
+    // Maintenant, extraire les valeurs uniques de la caractéristique demandée depuis les tickets filtrés
+    filteredTickets.forEach((ticket) => {
+      switch (characteristic) {
+        case "id":
+          values.add(ticket.number.toString());
+          break;
+        case "description":
+          if (ticket.description) {
+            values.add(ticket.description);
+          }
+          break;
+        case "statut":
+          values.add(ticket.status);
+          break;
+        case "priorite":
+          values.add(ticket.priority);
+          break;
+        case "titre":
+          values.add(ticket.title);
+          break;
+        case "demandeur":
+          if (ticket.creator?.full_name) {
+            values.add(ticket.creator.full_name);
+          }
+          break;
+        case "technicien":
+          if (ticket.technician?.full_name) {
+            values.add(ticket.technician.full_name);
+          }
+          break;
+      }
+    });
+    return Array.from(values).sort();
+  }
+
+  // Fonction pour obtenir le libellé d'un statut
+  function getStatusLabel(status: string): string {
+    switch (status) {
+      case "en_attente_analyse": return "En attente d'analyse";
+      case "assigne_technicien": return "Assigné au technicien";
+      case "en_cours": return "En cours";
+      case "resolu": return "Résolu";
+      case "rejete": return "Rejeté";
+      case "cloture": return "Clôturé";
+      default: return status;
+    }
+  }
+
+  // Fonction pour obtenir le libellé d'une priorité
+  function getPriorityLabel(priority: string): string {
+    switch (priority) {
+      case "faible": return "Faible";
+      case "moyenne": return "Moyenne";
+      case "haute": return "Haute";
+      case "critique": return "Critique";
+      default: return priority;
+    }
+  }
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", fontFamily: "sans-serif", background: "#f5f5f5" }}>
       {/* Sidebar */}
       <div style={{ 
-        width: "250px", 
+        width: sidebarCollapsed ? "80px" : "250px", 
         background: "#1e293b", 
         color: "white", 
         padding: "20px",
         display: "flex",
         flexDirection: "column",
-        gap: "20px"
+        gap: "20px",
+        transition: "width 0.3s ease"
       }}>
-        {/* User Profile Section */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: "20px", paddingBottom: "20px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
-          <div style={{
-            width: "60px",
-            height: "60px",
-            borderRadius: "50%",
-            background: "#9ca3af",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "white",
-            fontSize: "20px",
-            fontWeight: "600",
-            marginBottom: "12px"
-          }}>
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              <circle cx="12" cy="7" r="4" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+        {/* Gestion d'Incidents Section */}
+        <div style={{ 
+          display: "flex", 
+          alignItems: "center", 
+          justifyContent: "space-between",
+          marginBottom: "20px", 
+          paddingBottom: "20px", 
+          borderBottom: "1px solid rgba(255,255,255,0.1)" 
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", flex: 1 }}>
+            {/* Logo 3D cube */}
+            <div style={{
+              width: "32px",
+              height: "32px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#60a5fa"
+            }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                <line x1="12" y1="22.08" x2="12" y2="12" />
+              </svg>
+            </div>
+            {!sidebarCollapsed && (
+              <div style={{ fontSize: "16px", fontWeight: "600", color: "white", whiteSpace: "nowrap", flex: 1 }}>
+                Gestion d'Incidents
           </div>
-          <div style={{ fontSize: "16px", fontWeight: "600", color: "white", marginBottom: "4px" }}>
-            {userInfo?.full_name || "Jean Dupont"}
-          </div>
-          <div style={{ fontSize: "12px", color: "rgba(255,255,255,0.7)" }}>
-            Utilisateur
+            )}
         </div>
+          {!sidebarCollapsed && (
+            <div 
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              style={{
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "24px",
+                height: "24px",
+                borderRadius: "4px",
+                marginLeft: "16px",
+                transition: "background 0.2s ease"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "rgba(255,255,255,0.1)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+              }}
+            >
+              <PanelLeft size={20} color="white" />
+            </div>
+          )}
+          {sidebarCollapsed && (
+            <div 
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              style={{
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "24px",
+                height: "24px",
+                borderRadius: "4px",
+                margin: "0 auto",
+                transition: "background 0.2s ease"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "rgba(255,255,255,0.1)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+              }}
+            >
+              <PanelLeft size={20} color="white" style={{ transform: "rotate(180deg)" }} />
+            </div>
+          )}
         </div>
 
         <div 
@@ -576,20 +762,57 @@ function UserDashboard({ token: tokenProp }: UserDashboardProps) {
           padding: "16px 30px",
           display: "flex",
           alignItems: "center",
-          justifyContent: "flex-end",
-          gap: "24px",
+          justifyContent: "space-between",
           borderBottom: "1px solid rgba(59, 130, 246, 0.2)"
         }}>
-          <div style={{ 
-            cursor: "pointer", 
-            width: "28px", 
-            height: "28px", 
+          {/* Left side - Empty to maintain top bar size */}
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          </div>
+
+          {/* Right side - Icons */}
+          <div style={{ display: "flex", alignItems: "center", gap: "0" }}>
+            {/* Plus Icon - Trudesk style */}
+            <div
+              onClick={() => setShowCreateModal(true)}
+              style={{
+                width: "40px",
+                height: "40px",
             display: "flex", 
             alignItems: "center", 
             justifyContent: "center",
             color: "white",
-            borderRadius: "6px",
-            transition: "all 0.2s ease"
+            cursor: "pointer", 
+                borderRadius: "4px",
+                transition: "background 0.2s ease"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "rgba(255,255,255,0.1)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+              }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            </div>
+            
+            {/* Separator */}
+            <div style={{ width: "1px", height: "24px", background: "rgba(255,255,255,0.2)", margin: "0 8px" }}></div>
+
+            {/* Chat Icon - Simple speech bubble */}
+            <div
+              style={{
+                width: "40px",
+                height: "40px",
+            display: "flex", 
+            alignItems: "center", 
+            justifyContent: "center",
+            color: "white",
+                cursor: "pointer",
+                borderRadius: "4px",
+                transition: "background 0.2s ease"
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.background = "rgba(255,255,255,0.1)";
@@ -598,28 +821,28 @@ function UserDashboard({ token: tokenProp }: UserDashboardProps) {
             e.currentTarget.style.background = "transparent";
           }}
           >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-              {/* Bulle de conversation arrière (décalée en haut à gauche) */}
-              <rect x="2" y="3" width="10" height="8" rx="1.5" opacity="0.7" />
-              <polygon points="10,11 8.5,12.5 10,12.5" opacity="0.7" />
-              {/* Bulle de conversation principale */}
-              <rect x="4" y="5" width="10" height="8" rx="1.5" />
-              <polygon points="12,13 10.5,14.5 12,14.5" />
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>
           </div>
+
+            {/* Separator */}
+            <div style={{ width: "1px", height: "24px", background: "rgba(255,255,255,0.2)", margin: "0 8px" }}></div>
+
+            {/* Bell Icon with Notification - Trudesk style */}
           <div 
             onClick={() => setShowNotifications(!showNotifications)}
             style={{ 
-              cursor: "pointer", 
-              width: "28px", 
-              height: "28px", 
+                width: "40px",
+                height: "40px",
               display: "flex", 
               alignItems: "center", 
               justifyContent: "center",
               color: "white",
+                cursor: "pointer",
+                borderRadius: "4px",
               position: "relative",
-              borderRadius: "6px",
-              transition: "all 0.2s ease"
+                transition: "background 0.2s ease"
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "rgba(255,255,255,0.1)";
@@ -628,34 +851,69 @@ function UserDashboard({ token: tokenProp }: UserDashboardProps) {
               e.currentTarget.style.background = "transparent";
             }}
           >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-              {/* Boucle circulaire en haut */}
-              <circle cx="12" cy="4.5" r="1" />
-              {/* Corps de la cloche (base large arrondie, sommet étroit arrondi) */}
-              <path d="M6 7.5a6 6 0 0 1 12 0c0 6.5 2.5 8.5 2.5 8.5H3.5s2.5-2 2.5-8.5z" />
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
             </svg>
-            {/* Badge de notification */}
+              {/* Notification Badge - Trudesk style (top right) */}
             {unreadCount > 0 && (
               <span style={{
                 position: "absolute",
-                top: "-5px",
-                right: "-5px",
-                minWidth: "18px",
-                height: "18px",
+                  top: "4px",
+                  right: "4px",
+                  minWidth: "16px",
+                  height: "16px",
                 background: "#ef4444",
                 borderRadius: "50%",
-                border: "2px solid #374151",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: "11px",
+                  fontSize: "10px",
                 fontWeight: "bold",
                 color: "white",
-                padding: "0 4px"
+                  padding: "0 3px",
+                  border: "2px solid #1e293b"
               }}>
                 {unreadCount > 99 ? "99+" : unreadCount}
               </span>
             )}
+          </div>
+
+            {/* Separator */}
+            <div style={{ width: "1px", height: "24px", background: "rgba(255,255,255,0.2)", margin: "0 8px" }}></div>
+
+            {/* User Name and Avatar - Trudesk style */}
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", paddingLeft: "8px" }}>
+              <div style={{ fontSize: "14px", color: "white" }}>
+              {userInfo?.full_name || "Utilisateur"}
+              </div>
+              <div style={{
+                width: "32px",
+                height: "32px",
+                borderRadius: "50%",
+                background: "rgba(255,255,255,0.15)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                position: "relative"
+              }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                  <circle cx="12" cy="7" r="4" />
+                </svg>
+                {/* Online Status Indicator - Trudesk style (green circle with white border) */}
+              <div style={{
+                position: "absolute",
+                bottom: "0",
+                right: "0",
+                  width: "10px",
+                  height: "10px",
+                background: "#10b981",
+                borderRadius: "50%",
+                  border: "2px solid white"
+              }}></div>
+            </div>
+              </div>
           </div>
         </div>
 
@@ -670,53 +928,627 @@ function UserDashboard({ token: tokenProp }: UserDashboardProps) {
             </div>
           )}
         
-        {/* Summary Cards - Visible seulement sur Dashboard */}
+        {/* Section Tickets - Style GLPI - Visible seulement sur Dashboard */}
         {activeSection === "dashboard" && (
-          <div style={{ display: "flex", gap: "20px", marginBottom: "30px" }}>
             <div style={{ 
-              padding: "24px", 
               background: "white", 
               borderRadius: "8px", 
               boxShadow: "0 2px 4px rgba(0,0,0,0.1)", 
-              flex: 1,
+            padding: "20px",
+            marginBottom: "30px"
+          }}>
+            {/* Header avec titre et bouton */}
+          <div style={{ 
               display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-start"
+              justifyContent: "space-between", 
+            alignItems: "center", 
+              marginBottom: "20px",
+              paddingBottom: "15px",
+              borderBottom: "1px solid #e5e7eb"
             }}>
-              <div style={{ fontSize: "32px", fontWeight: "bold", color: "#ff9800", lineHeight: "1", marginBottom: "8px" }}>
-                {opened}
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+                <h3 style={{ fontSize: "18px", fontWeight: "600", color: "#1e293b", margin: 0 }}>Tickets</h3>
               </div>
-              <div style={{ fontSize: "14px", color: "#666" }}>Tickets Ouverts</div>
+              <button
+                onClick={() => setShowCreateModal(true)}
+                style={{
+                  padding: "8px 16px",
+                background: "#3b82f6",
+            color: "white",
+                  border: "none",
+            borderRadius: "6px",
+                fontSize: "14px",
+                  fontWeight: "500",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  transition: "background 0.2s ease"
+          }}
+          onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "#2563eb";
+          }}
+          onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "#3b82f6";
+                }}
+              >
+                <span>+</span>
+                <span>Créer un ticket</span>
+              </button>
             </div>
-            <div style={{ 
-              padding: "24px", 
-              background: "white", 
-              borderRadius: "8px", 
-              boxShadow: "0 2px 4px rgba(0,0,0,0.1)", 
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-start"
-            }}>
-              <div style={{ fontSize: "32px", fontWeight: "bold", color: "#007bff", lineHeight: "1", marginBottom: "8px" }}>
-                {inProgress}
-              </div>
-              <div style={{ fontSize: "14px", color: "#666" }}>Tickets en cours</div>
+
+            {/* Liste des statuts */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              {/* En attente d'analyse */}
+          <div 
+                onClick={() => handleStatusClick("en_attente_analyse")}
+            style={{ 
+              display: "flex", 
+              alignItems: "center", 
+                  justifyContent: "space-between",
+                  padding: "10px",
+              borderRadius: "6px",
+                  cursor: "pointer",
+                  transition: "background 0.2s ease",
+                  background: selectedStatus === "en_attente_analyse" ? "#f3f4f6" : "transparent"
+            }}
+            onMouseEnter={(e) => {
+                  if (selectedStatus !== "en_attente_analyse") {
+                    e.currentTarget.style.background = "#f9fafb";
+                  }
+            }}
+            onMouseLeave={(e) => {
+                  if (selectedStatus !== "en_attente_analyse") {
+              e.currentTarget.style.background = "transparent";
+                  }
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <div style={{ width: "12px", height: "12px", borderRadius: "50%", background: "#f59e0b" }}></div>
+                  <span style={{ fontSize: "14px", color: "#374151" }}>En attente d'analyse</span>
             </div>
+                <span style={{ fontSize: "14px", fontWeight: "600", color: "#1e293b" }}>{statusCounts.en_attente_analyse}</span>
+              </div>
+
+              {/* Assigné au technicien */}
+              <div
+                onClick={() => handleStatusClick("assigne_technicien")}
+                style={{
+                display: "flex",
+                alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "10px",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  transition: "background 0.2s ease",
+                  background: selectedStatus === "assigne_technicien" ? "#f3f4f6" : "transparent"
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedStatus !== "assigne_technicien") {
+                    e.currentTarget.style.background = "#f9fafb";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedStatus !== "assigne_technicien") {
+                    e.currentTarget.style.background = "transparent";
+                  }
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <div style={{ width: "12px", height: "12px", borderRadius: "50%", border: "2px solid #10b981" }}></div>
+                  <span style={{ fontSize: "14px", color: "#374151" }}>Assigné au technicien</span>
+          </div>
+                <span style={{ fontSize: "14px", fontWeight: "600", color: "#1e293b" }}>{statusCounts.assigne_technicien}</span>
+              </div>
+
+              {/* En cours */}
+              <div 
+                onClick={() => handleStatusClick("en_cours")}
+                  style={{
+            display: "flex", 
+            alignItems: "center", 
+                  justifyContent: "space-between",
+                  padding: "10px",
+                  borderRadius: "6px",
+                    cursor: "pointer",
+                  transition: "background 0.2s ease",
+                  background: selectedStatus === "en_cours" ? "#f3f4f6" : "transparent"
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedStatus !== "en_cours") {
+                    e.currentTarget.style.background = "#f9fafb";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedStatus !== "en_cours") {
+                    e.currentTarget.style.background = "transparent";
+                  }
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                  </svg>
+                  <span style={{ fontSize: "14px", color: "#374151" }}>En cours</span>
+                </div>
+                <span style={{ fontSize: "14px", fontWeight: "600", color: "#1e293b" }}>{statusCounts.en_cours}</span>
+              </div>
+
+              {/* Résolu */}
+              <div 
+                onClick={() => handleStatusClick("resolu")}
+                style={{ 
+                display: "flex",
+                alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "10px",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  transition: "background 0.2s ease",
+                  background: selectedStatus === "resolu" ? "#f3f4f6" : "transparent"
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedStatus !== "resolu") {
+                    e.currentTarget.style.background = "#f9fafb";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedStatus !== "resolu") {
+                    e.currentTarget.style.background = "transparent";
+                  }
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <div style={{ width: "12px", height: "12px", borderRadius: "50%", border: "2px solid #6b7280" }}></div>
+                  <span style={{ fontSize: "14px", color: "#374151" }}>Résolu</span>
+              </div>
+                <span style={{ fontSize: "14px", fontWeight: "600", color: "#1e293b" }}>{statusCounts.resolu}</span>
+            </div>
+
+              {/* Rejeté */}
+              <div
+                onClick={() => handleStatusClick("rejete")}
+                style={{
+                  display: "flex", 
+                  alignItems: "center", 
+                  justifyContent: "space-between",
+                  padding: "10px",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  transition: "background 0.2s ease",
+                  background: selectedStatus === "rejete" ? "#f3f4f6" : "transparent"
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedStatus !== "rejete") {
+                    e.currentTarget.style.background = "#f9fafb";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedStatus !== "rejete") {
+                    e.currentTarget.style.background = "transparent";
+                  }
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <div style={{ width: "12px", height: "12px", borderRadius: "50%", background: "#ef4444" }}></div>
+                  <span style={{ fontSize: "14px", color: "#374151" }}>Rejeté</span>
+                </div>
+                <span style={{ fontSize: "14px", fontWeight: "600", color: "#1e293b" }}>{statusCounts.rejete}</span>
+        </div>
+
+              {/* Clôturé */}
+              <div 
+                onClick={() => handleStatusClick("cloture")}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "10px",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  transition: "background 0.2s ease",
+                  background: selectedStatus === "cloture" ? "#f3f4f6" : "transparent"
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedStatus !== "cloture") {
+                    e.currentTarget.style.background = "#f9fafb";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (selectedStatus !== "cloture") {
+                    e.currentTarget.style.background = "transparent";
+                  }
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <div style={{ width: "12px", height: "12px", borderRadius: "50%", background: "#6b7280" }}></div>
+                  <span style={{ fontSize: "14px", color: "#374151" }}>Clôturé</span>
+              </div>
+                <span style={{ fontSize: "14px", fontWeight: "600", color: "#1e293b" }}>{statusCounts.cloture}</span>
+          </div>
+        </div>
+            </div>
+          )}
+        
+        {/* Interface de filtrage et tableau - Style GLPI */}
+        {activeSection === "tickets-by-status" && selectedStatus && (
             <div style={{ 
-              padding: "24px", 
               background: "white", 
               borderRadius: "8px", 
               boxShadow: "0 2px 4px rgba(0,0,0,0.1)", 
-              flex: 1,
+            padding: "20px",
+            marginBottom: "30px"
+          }}>
+            {/* Barre de filtres */}
+            <div style={{ 
+              background: "#f9fafb", 
+              padding: "12px", 
+              borderRadius: "6px", 
+              marginBottom: "16px",
               display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-start"
+              alignItems: "center",
+              gap: "12px"
             }}>
-              <div style={{ fontSize: "32px", fontWeight: "bold", color: "#28a745", lineHeight: "1", marginBottom: "8px" }}>
-                {resolved}
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: 1 }}>
+                <select 
+                  value={selectedCharacteristic || ""}
+                  onChange={(e) => {
+                    const newChar = e.target.value;
+                    if (!newChar) return; // Ne pas permettre de désélectionner
+                    
+                    // Obtenir les valeurs uniques pour la nouvelle caractéristique en utilisant les valeurs actuelles
+                    const uniqueValues = getUniqueValues(newChar, selectedStatus, selectedFilterValue, selectedCharacteristic);
+                    
+                    // Si il n'y a qu'une seule valeur, la sélectionner automatiquement
+                    if (uniqueValues.length === 1) {
+                      setSelectedFilterValue(uniqueValues[0]);
+                    } else {
+                      // Sinon, réinitialiser
+                      setSelectedFilterValue("");
+                    }
+                    
+                    // Mettre à jour la caractéristique
+                    setSelectedCharacteristic(newChar);
+                  }}
+                  style={{ 
+                    padding: "6px 12px", 
+                    border: "1px solid #d1d5db", 
+                    borderRadius: "4px",
+                    fontSize: "14px",
+                    background: "white",
+                    cursor: "pointer",
+                    color: selectedCharacteristic ? "#1e293b" : "#9ca3af"
+                  }}
+                >
+                  <option value="" disabled>Caractéristiques</option>
+                  <option value="id">ID</option>
+                  <option value="titre">Titre</option>
+                  <option value="description">Description</option>
+                  <option value="statut">Statut</option>
+                  <option value="priorite">Priorité</option>
+                  <option value="demandeur">Demandeur</option>
+                  <option value="technicien">Technicien</option>
+                </select>
+                <select 
+                  style={{ 
+                    padding: "6px 12px", 
+                    border: "1px solid #d1d5db", 
+                    borderRadius: "4px",
+                    fontSize: "14px",
+                    background: "white"
+                  }}
+                  value="est"
+                  disabled
+                >
+                  <option value="est">est</option>
+                </select>
+                <select
+                  value={selectedFilterValue}
+                  onChange={(e) => setSelectedFilterValue(e.target.value)}
+                  style={{ 
+                    padding: "6px 12px", 
+                    border: "1px solid #d1d5db", 
+                    borderRadius: "4px",
+                    fontSize: "14px",
+              background: "white", 
+                    cursor: "pointer",
+                    minWidth: "200px"
+                  }}
+                >
+                  <option value="">Sélectionner...</option>
+                  {getUniqueValues(selectedCharacteristic).map((value) => (
+                    <option key={value} value={value}>
+                      {selectedCharacteristic === "statut" ? getStatusLabel(value) :
+                       selectedCharacteristic === "priorite" ? getPriorityLabel(value) :
+                       value.length > 50 ? value.substring(0, 50) + "..." : value}
+                    </option>
+                  ))}
+                </select>
               </div>
-              <div style={{ fontSize: "14px", color: "#666" }}>Tickets Résolus</div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <input
+                  type="text"
+                  placeholder="Rechercher..."
+                  value={searchFilter}
+                  onChange={(e) => setSearchFilter(e.target.value)}
+                  style={{
+                    padding: "6px 12px",
+                    border: "1px solid #d1d5db",
+                    borderRadius: "4px",
+                    fontSize: "14px",
+                    width: "200px"
+                  }}
+                />
+                <button
+                  onClick={() => setSearchFilter("")}
+                  style={{
+                    padding: "6px 12px",
+                    background: "#f3f4f6",
+                    border: "1px solid #d1d5db",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    fontSize: "14px"
+                  }}
+                >
+                  Effacer
+                </button>
+            </div>
+            </div>
+
+            {/* Barre d'actions */}
+            <div style={{ 
+              display: "flex",
+              alignItems: "center", 
+              justifyContent: "space-between",
+              marginBottom: "16px",
+              paddingBottom: "12px",
+              borderBottom: "1px solid #e5e7eb"
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <button
+                  onClick={() => {
+                    setSelectedStatus(null);
+                    setActiveSection("dashboard");
+                    setSearchFilter("");
+                    setSelectedCharacteristic("statut");
+                    setSelectedFilterValue("");
+                  }}
+                  style={{
+                    padding: "6px 12px",
+                    background: "#f3f4f6",
+                    border: "1px solid #d1d5db",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    fontSize: "14px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    color: "#1e293b"
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M19 12H5M12 19l-7-7 7-7" />
+                  </svg>
+                  Retour
+                </button>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontSize: "14px", color: "#6b7280" }}>
+                  {tickets.filter((t) => {
+                    // Filtre par statut initial (si on est arrivé depuis le dashboard)
+                    let matchesStatus = true;
+                    if (selectedStatus) {
+                      matchesStatus = t.status === selectedStatus;
+                    }
+                    
+                    // Filtre par caractéristique sélectionnée
+                    let matchesFilter = true;
+                    if (selectedFilterValue) {
+                      switch (selectedCharacteristic) {
+                        case "id":
+                          matchesFilter = t.number.toString() === selectedFilterValue;
+                          break;
+                        case "titre":
+                          matchesFilter = t.title.toLowerCase().includes(selectedFilterValue.toLowerCase());
+                          break;
+                        case "description":
+                          matchesFilter = t.description?.toLowerCase().includes(selectedFilterValue.toLowerCase()) || false;
+                          break;
+                        case "statut":
+                          matchesFilter = t.status === selectedFilterValue;
+                          break;
+                        case "priorite":
+                          matchesFilter = t.priority === selectedFilterValue;
+                          break;
+                        case "demandeur":
+                          matchesFilter = t.creator?.full_name === selectedFilterValue;
+                          break;
+                        case "technicien":
+                          matchesFilter = t.technician?.full_name === selectedFilterValue;
+                          break;
+                      }
+                    }
+                    // Filtre par recherche
+                    const matchesSearch = searchFilter === "" || 
+                      t.title.toLowerCase().includes(searchFilter.toLowerCase()) ||
+                      t.number.toString().includes(searchFilter);
+                    return matchesStatus && matchesFilter && matchesSearch;
+                  }).length} ticket(s)
+                </span>
+              </div>
+            </div>
+
+            {/* Tableau des tickets */}
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: "#f9fafb", borderBottom: "2px solid #e5e7eb" }}>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "12px", fontWeight: "600", color: "#374151", textTransform: "uppercase" }}>ID</th>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "12px", fontWeight: "600", color: "#374151", textTransform: "uppercase" }}>TITRE</th>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "12px", fontWeight: "600", color: "#374151", textTransform: "uppercase" }}>STATUT</th>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "12px", fontWeight: "600", color: "#374151", textTransform: "uppercase" }}>PRIORITÉ</th>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "12px", fontWeight: "600", color: "#374151", textTransform: "uppercase" }}>DATE D'OUVERTURE</th>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "12px", fontWeight: "600", color: "#374151", textTransform: "uppercase" }}>DEMANDEUR</th>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "12px", fontWeight: "600", color: "#374151", textTransform: "uppercase" }}>TECHNICIEN</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tickets
+                    .filter((t) => {
+                      // Filtre par statut initial (si on est arrivé depuis le dashboard)
+                      let matchesStatus = true;
+                      if (selectedStatus) {
+                        matchesStatus = t.status === selectedStatus;
+                      }
+                      
+                      // Filtre par caractéristique sélectionnée
+                      let matchesFilter = true;
+                      if (selectedFilterValue) {
+                        switch (selectedCharacteristic) {
+                          case "id":
+                            matchesFilter = t.number.toString() === selectedFilterValue;
+                            break;
+                          case "titre":
+                            matchesFilter = t.title.toLowerCase().includes(selectedFilterValue.toLowerCase());
+                            break;
+                          case "description":
+                            matchesFilter = t.description?.toLowerCase().includes(selectedFilterValue.toLowerCase()) || false;
+                            break;
+                          case "statut":
+                            matchesFilter = t.status === selectedFilterValue;
+                            break;
+                          case "priorite":
+                            matchesFilter = t.priority === selectedFilterValue;
+                            break;
+                          case "demandeur":
+                            matchesFilter = t.creator?.full_name === selectedFilterValue;
+                            break;
+                          case "technicien":
+                            matchesFilter = t.technician?.full_name === selectedFilterValue;
+                            break;
+                        }
+                      }
+                      // Filtre par recherche
+                      const matchesSearch = searchFilter === "" || 
+                        t.title.toLowerCase().includes(searchFilter.toLowerCase()) ||
+                        t.number.toString().includes(searchFilter);
+                      return matchesStatus && matchesFilter && matchesSearch;
+                    })
+                    .map((t) => (
+                      <tr 
+                        key={t.id} 
+                        style={{ 
+                          borderBottom: "1px solid #e5e7eb",
+                          cursor: "pointer"
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = "#f9fafb";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "white";
+                        }}
+                      >
+                        <td style={{ padding: "12px", fontSize: "14px", color: "#1e293b" }}>#{t.number}</td>
+                        <td style={{ padding: "12px", fontSize: "14px", color: "#1e293b" }}>{t.title}</td>
+                        <td style={{ padding: "12px" }}>
+                          <span style={{
+                            padding: "4px 10px",
+                            borderRadius: "12px",
+                            fontSize: "12px",
+                            fontWeight: "500",
+                            background: t.status === "en_attente_analyse" ? "#fef3c7" : t.status === "assigne_technicien" ? "#dbeafe" : t.status === "en_cours" ? "#fed7aa" : t.status === "resolu" ? "#e5e7eb" : t.status === "rejete" ? "#fee2e2" : "#e5e7eb",
+                            color: t.status === "en_attente_analyse" ? "#92400e" : t.status === "assigne_technicien" ? "#1e40af" : t.status === "en_cours" ? "#9a3412" : t.status === "resolu" ? "#374151" : t.status === "rejete" ? "#991b1b" : "#374151",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px"
+                          }}>
+                            {t.status === "en_attente_analyse" && <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#f59e0b" }}></div>}
+                            {t.status === "assigne_technicien" && <div style={{ width: "8px", height: "8px", borderRadius: "50%", border: "2px solid #3b82f6" }}></div>}
+                            {t.status === "en_cours" && <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#f97316" }}></div>}
+                            {t.status === "resolu" && <div style={{ width: "8px", height: "8px", borderRadius: "50%", border: "2px solid #6b7280" }}></div>}
+                            {t.status === "rejete" && <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#ef4444" }}></div>}
+                            {t.status === "cloture" && <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#6b7280" }}></div>}
+                            {t.status === "en_attente_analyse" ? "En attente d'analyse" :
+                             t.status === "assigne_technicien" ? "Assigné au technicien" :
+                             t.status === "en_cours" ? "En cours" :
+                             t.status === "resolu" ? "Résolu" :
+                             t.status === "rejete" ? "Rejeté" :
+                             t.status === "cloture" ? "Clôturé" : t.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px" }}>
+                          <span style={{
+                            padding: "4px 10px",
+                            borderRadius: "12px",
+                            fontSize: "12px",
+                            fontWeight: "500",
+                            background: t.priority === "critique" ? "#fee2e2" : t.priority === "haute" ? "#fef3c7" : t.priority === "moyenne" ? "#dbeafe" : "#e5e7eb",
+                            color: t.priority === "critique" ? "#991b1b" : t.priority === "haute" ? "#92400e" : t.priority === "moyenne" ? "#1e40af" : "#374151"
+                          }}>
+                            {t.priority}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px", fontSize: "14px", color: "#1e293b" }}>
+                          {formatDate(t.created_at)}
+                        </td>
+                        <td style={{ padding: "12px", fontSize: "14px", color: "#1e293b" }}>
+                          {t.creator?.full_name || "N/A"}
+                        </td>
+                        <td style={{ padding: "12px", fontSize: "14px", color: "#1e293b" }}>
+                          {t.technician?.full_name || "-"}
+                        </td>
+                      </tr>
+                    ))}
+                  {tickets.filter((t) => {
+                    // Filtre par caractéristique sélectionnée
+                    let matchesFilter = true;
+                    if (selectedFilterValue) {
+                      switch (selectedCharacteristic) {
+                        case "id":
+                          matchesFilter = t.number.toString() === selectedFilterValue;
+                          break;
+                        case "titre":
+                          matchesFilter = t.title.toLowerCase().includes(selectedFilterValue.toLowerCase());
+                          break;
+                        case "description":
+                          matchesFilter = t.description?.toLowerCase().includes(selectedFilterValue.toLowerCase()) || false;
+                          break;
+                        case "statut":
+                          matchesFilter = t.status === selectedFilterValue;
+                          break;
+                        case "priorite":
+                          matchesFilter = t.priority === selectedFilterValue;
+                          break;
+                        case "demandeur":
+                          matchesFilter = t.creator?.full_name === selectedFilterValue;
+                          break;
+                        case "technicien":
+                          matchesFilter = t.technician?.full_name === selectedFilterValue;
+                          break;
+                      }
+                    }
+                    // Filtre par recherche
+                    const matchesSearch = searchFilter === "" || 
+                      t.title.toLowerCase().includes(searchFilter.toLowerCase()) ||
+                      t.number.toString().includes(searchFilter);
+                    return matchesFilter && matchesSearch;
+                  }).length === 0 && (
+                    <tr>
+                      <td colSpan={7} style={{ padding: "40px", textAlign: "center", color: "#9ca3af", fontSize: "14px" }}>
+                        Aucun ticket trouvé
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
@@ -778,8 +1610,8 @@ function UserDashboard({ token: tokenProp }: UserDashboardProps) {
                         borderRadius: "20px",
                         fontSize: "12px",
                         fontWeight: "500",
-                        background: t.status === "en_attente_analyse" ? "#ffc107" : t.status === "assigne_technicien" ? "#007bff" : t.status === "en_cours" ? "#ff9800" : t.status === "resolu" ? "#28a745" : t.status === "cloture" ? "#6c757d" : "#dc3545",
-                        color: "white",
+                        background: t.status === "en_attente_analyse" ? "#fef3c7" : t.status === "assigne_technicien" ? "#dbeafe" : t.status === "en_cours" ? "#fed7aa" : t.status === "resolu" ? "#e5e7eb" : t.status === "rejete" ? "#fee2e2" : t.status === "cloture" ? "#e5e7eb" : "#e5e7eb",
+                        color: t.status === "en_attente_analyse" ? "#92400e" : t.status === "assigne_technicien" ? "#1e40af" : t.status === "en_cours" ? "#9a3412" : t.status === "resolu" ? "#374151" : t.status === "rejete" ? "#991b1b" : t.status === "cloture" ? "#374151" : "#374151",
                         whiteSpace: "nowrap",
                         display: "inline-block"
                       }}>
@@ -797,8 +1629,8 @@ function UserDashboard({ token: tokenProp }: UserDashboardProps) {
                         borderRadius: "20px",
                         fontSize: "12px",
                         fontWeight: "500",
-                        background: t.priority === "critique" ? "#dc3545" : t.priority === "haute" ? "#ffc107" : t.priority === "moyenne" ? "#007bff" : "#6c757d",
-                        color: "white"
+                        background: t.priority === "critique" ? "#fee2e2" : t.priority === "haute" ? "#fef3c7" : t.priority === "moyenne" ? "#dbeafe" : "#e5e7eb",
+                        color: t.priority === "critique" ? "#991b1b" : t.priority === "haute" ? "#92400e" : t.priority === "moyenne" ? "#1e40af" : "#374151"
                       }}>
                         {t.priority}
                       </span>
