@@ -1129,7 +1129,7 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
                         >
                           <option value="">Sélectionner un technicien</option>
                           {getFilteredTechnicians(t.type).map((tech) => {
-                            const workload = tech.assigned_tickets_count || 0;
+                            const workload = allTickets.filter((tk) => tk.technician_id === tech.id && (tk.status === "assigne_technicien" || tk.status === "en_cours")).length;
                             const specialization = tech.specialization ? ` (${tech.specialization})` : "";
                             return (
                               <option key={tech.id} value={tech.id}>
@@ -1173,36 +1173,38 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
                       </div>
                     ) : (
                       <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                        <button
-                          onClick={() => setSelectedTicket(t.id)}
-                          disabled={loading}
-                          style={{ 
-                            fontSize: "12px", 
-                            padding: "6px 12px", 
-                            backgroundColor: "#dbeafe", 
-                            color: "#1e40af", 
-                            border: "1px solid #93c5fd",
-                            borderRadius: "20px", 
-                            cursor: loading ? "not-allowed" : "pointer",
-                            fontWeight: "500",
-                            transition: "all 0.2s ease",
-                            opacity: loading ? 0.6 : 1
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!loading) {
-                              e.currentTarget.style.backgroundColor = "#bfdbfe";
-                              e.currentTarget.style.borderColor = "#60a5fa";
-                            }
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!loading) {
-                              e.currentTarget.style.backgroundColor = "#dbeafe";
-                              e.currentTarget.style.borderColor = "#93c5fd";
-                            }
-                          }}
-                        >
-                          Assigner
-                        </button>
+                        {!t.technician_id && (
+                          <button
+                            onClick={() => setSelectedTicket(t.id)}
+                            disabled={loading}
+                            style={{ 
+                              fontSize: "12px", 
+                              padding: "6px 12px", 
+                              backgroundColor: "#dbeafe", 
+                              color: "#1e40af", 
+                              border: "1px solid #93c5fd",
+                              borderRadius: "20px", 
+                              cursor: loading ? "not-allowed" : "pointer",
+                              fontWeight: "500",
+                              transition: "all 0.2s ease",
+                              opacity: loading ? 0.6 : 1
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!loading) {
+                                e.currentTarget.style.backgroundColor = "#bfdbfe";
+                                e.currentTarget.style.borderColor = "#60a5fa";
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!loading) {
+                                e.currentTarget.style.backgroundColor = "#dbeafe";
+                                e.currentTarget.style.borderColor = "#93c5fd";
+                              }
+                            }}
+                          >
+                            Assigner
+                          </button>
+                        )}
                         {roleName !== "Secrétaire DSI" && (
                           <button
                             onClick={() => handleEscalate(t.id)}
@@ -1248,7 +1250,7 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
                         >
                           <option value="">Sélectionner un technicien</option>
                           {getFilteredTechnicians(t.type).map((tech) => {
-                            const workload = tech.assigned_tickets_count || 0;
+                            const workload = allTickets.filter((tk) => tk.technician_id === tech.id && (tk.status === "assigne_technicien" || tk.status === "en_cours")).length;
                             const specialization = tech.specialization ? ` (${tech.specialization})` : "";
                             return (
                               <option key={tech.id} value={tech.id}>
@@ -1591,7 +1593,7 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
                                 >
                                   <option value="">Sélectionner un technicien</option>
                                   {getFilteredTechnicians(t.type).map((tech) => {
-                                    const workload = tech.assigned_tickets_count || 0;
+                                    const workload = allTickets.filter((tk) => tk.technician_id === tech.id && (tk.status === "assigne_technicien" || tk.status === "en_cours")).length;
                                     const specialization = tech.specialization ? ` (${tech.specialization})` : "";
                                     return (
                                       <option key={tech.id} value={tech.id}>
@@ -1635,13 +1637,15 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
                               </div>
                             ) : (
                               <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                                <button
-                                  onClick={() => setSelectedTicket(t.id)}
-                                  disabled={loading}
-                                  style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}
-                                >
-                                  Assigner
-                                </button>
+                                {!t.technician_id && (
+                                  <button
+                                    onClick={() => setSelectedTicket(t.id)}
+                                    disabled={loading}
+                                    style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}
+                                  >
+                                    Assigner
+                                  </button>
+                                )}
                                 {roleName !== "Secrétaire DSI" && (
                                   <button
                                     onClick={() => handleEscalate(t.id)}
@@ -1663,7 +1667,7 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
                                 >
                                   <option value="">Sélectionner un technicien</option>
                                   {getFilteredTechnicians(t.type).map((tech) => {
-                                    const workload = tech.assigned_tickets_count || 0;
+                                    const workload = allTickets.filter((tk) => tk.technician_id === tech.id && (tk.status === "assigne_technicien" || tk.status === "en_cours")).length;
                                     const specialization = tech.specialization ? ` (${tech.specialization})` : "";
                                     return (
                                       <option key={tech.id} value={tech.id}>

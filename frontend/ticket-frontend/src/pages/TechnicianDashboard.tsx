@@ -576,34 +576,7 @@ function TechnicianDashboard({ token }: TechnicianDashboardProps) {
               >
                 +
               </button>
-              {/* Sélecteur de statut de disponibilité */}
-              <div style={{ 
-                display: "flex", 
-                alignItems: "center", 
-                gap: "8px"
-              }}>
-                <span style={{ fontSize: "14px", color: "rgba(255,255,255,0.8)" }}>Statut :</span>
-                <select
-                  value={availabilityStatus}
-                  onChange={(e) => updateAvailabilityStatus(e.target.value)}
-                  disabled={updatingStatus}
-                  style={{
-                    padding: "6px 12px",
-                    borderRadius: "6px",
-                    border: "1px solid rgba(255,255,255,0.2)",
-                    background: "rgba(255,255,255,0.1)",
-                    color: "white",
-                    fontSize: "14px",
-                    cursor: updatingStatus ? "not-allowed" : "pointer",
-                    opacity: updatingStatus ? 0.6 : 1,
-                    outline: "none"
-                  }}
-                >
-                  <option value="disponible" style={{ color: "#333", background: "white" }}>Disponible</option>
-                  <option value="occupé" style={{ color: "#333", background: "white" }}>Occupé</option>
-                  <option value="en pause" style={{ color: "#333", background: "white" }}>En pause</option>
-                </select>
-              </div>
+            
               <div 
                 onClick={() => setShowNotifications(!showNotifications)}
                 style={{ 
@@ -736,6 +709,29 @@ function TechnicianDashboard({ token }: TechnicianDashboardProps) {
         {/* Contenu principal avec scroll */}
         <div style={{ flex: 1, padding: "30px", overflow: "auto" }}>
           <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", margin: "12px 0" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontSize: "14px", color: "#333" }}>Statut :</span>
+                <select
+                  value={availabilityStatus}
+                  onChange={(e) => updateAvailabilityStatus(e.target.value)}
+                  disabled={updatingStatus}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: "6px",
+                    border: "1px solid #ddd",
+                    background: "white",
+                    color: "#333",
+                    fontSize: "14px",
+                    outline: "none"
+                  }}
+                >
+                  <option value="disponible">Disponible</option>
+                  <option value="occupé">Occupé</option>
+                  <option value="en pause">En pause</option>
+                </select>
+              </div>
+            </div>
             {activeSection === "dashboard" && (
               <>
                 <h2>Tableau de bord - Technicien</h2>
