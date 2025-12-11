@@ -24,6 +24,11 @@ class UserBase(BaseModel):
     email: str  # Changed from EmailStr to str to avoid email-validator dependency issue
     agency: Optional[str] = None  # Agence au lieu de département
     phone: Optional[str] = None
+    specialization: Optional[str] = None  # Spécialisation : "materiel" ou "applicatif"
+    work_hours: Optional[str] = None  # Plages horaires (ex. "08:30-12:30 / 14:00-17:30")
+    availability_status: Optional[str] = None  # disponible / occupé / en pause
+    max_tickets_capacity: Optional[int] = None  # Capacité max de tickets simultanés
+    notes: Optional[str] = None  # Notes optionnelles
 
 
 class UserCreate(UserBase):
@@ -40,13 +45,21 @@ class UserUpdate(BaseModel):
     role_id: Optional[UUID] = None
     status: Optional[str] = None
     specialization: Optional[str] = None
+    work_hours: Optional[str] = None
+    availability_status: Optional[str] = None
+    max_tickets_capacity: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class AvailabilityStatusUpdate(BaseModel):
+    """Schéma pour mettre à jour uniquement le statut de disponibilité"""
+    availability_status: str  # disponible, occupé, en pause
 
 
 class UserRead(UserBase):
     id: UUID
     role: RoleRead
     status: str
-    specialization: Optional[str] = None  # Spécialisation : "materiel" ou "applicatif"
 
     class Config:
         from_attributes = True

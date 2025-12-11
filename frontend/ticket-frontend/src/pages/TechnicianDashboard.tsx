@@ -14,6 +14,7 @@ interface UserRead {
   full_name: string;
   email: string;
   agency?: string | null;
+  availability_status?: string | null;
 }
 
 interface TechnicianDashboardProps {
@@ -52,6 +53,8 @@ function TechnicianDashboard({ token }: TechnicianDashboardProps) {
   const [userInfo, setUserInfo] = useState<UserRead | null>(null);
   const [ticketDetails, setTicketDetails] = useState<Ticket | null>(null);
   const [activeSection, setActiveSection] = useState<string>("dashboard");
+  const [availabilityStatus, setAvailabilityStatus] = useState<string>("disponible");
+  const [updatingStatus, setUpdatingStatus] = useState<boolean>(false);
 
   async function loadNotifications() {
     if (!token || token.trim() === "") {
@@ -120,6 +123,39 @@ function TechnicianDashboard({ token }: TechnicianDashboardProps) {
     window.location.href = "/";
   }
 
+  async function updateAvailabilityStatus(newStatus: string) {
+    if (!token || updatingStatus) return;
+    
+    setUpdatingStatus(true);
+    try {
+      const res = await fetch("http://localhost:8000/users/me/availability-status", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          availability_status: newStatus
+        }),
+      });
+
+      if (res.ok) {
+        const updatedData = await res.json();
+        setAvailabilityStatus(newStatus);
+        setUserInfo(prev => prev ? { ...prev, availability_status: newStatus } : null);
+        alert("Statut de disponibilité mis à jour avec succès");
+      } else {
+        const error = await res.json();
+        alert(`Erreur: ${error.detail || "Impossible de mettre à jour le statut"}`);
+      }
+    } catch (err) {
+      console.error("Erreur mise à jour statut:", err);
+      alert("Erreur lors de la mise à jour du statut");
+    } finally {
+      setUpdatingStatus(false);
+    }
+  }
+
   useEffect(() => {
     async function loadTickets() {
       try {
@@ -149,8 +185,12 @@ function TechnicianDashboard({ token }: TechnicianDashboardProps) {
           setUserInfo({
             full_name: meData.full_name,
             email: meData.email,
-            agency: meData.agency
+            agency: meData.agency,
+            availability_status: meData.availability_status
           });
+          if (meData.availability_status) {
+            setAvailabilityStatus(meData.availability_status);
+          }
         }
       } catch (err) {
         console.error("Erreur chargement infos utilisateur:", err);
@@ -512,149 +552,183 @@ function TechnicianDashboard({ token }: TechnicianDashboardProps) {
         <div style={{
           background: "#1e293b",
           padding: "16px 30px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "flex-end",
-          gap: "24px",
           borderBottom: "1px solid #0f172a"
         }}>
-          <div style={{ 
-            cursor: "pointer", 
-            width: "24px", 
-            height: "24px", 
-            display: "flex", 
-            alignItems: "center", 
-            justifyContent: "center",
-            color: "white"
-          }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="currentColor"/>
-              <path d="M19 13a2 2 0 0 1-2 2H5l-4 4V3a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="currentColor" opacity="0.6" transform="translate(2, 2)"/>
-            </svg>
-          </div>
-          <div 
-            onClick={() => setShowNotifications(!showNotifications)}
-            style={{ 
-              cursor: "pointer", 
-              width: "24px", 
-              height: "24px", 
-              display: "flex", 
-              alignItems: "center", 
-              justifyContent: "center",
-              color: "white",
-              position: "relative"
-            }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" fill="currentColor"/>
-              <path d="M13.73 21a2 2 0 0 1-3.46 0" fill="currentColor"/>
-            </svg>
-            {unreadCount > 0 && (
-              <span style={{
-                position: "absolute",
-                top: "-5px",
-                right: "-5px",
-                minWidth: "18px",
-                height: "18px",
-                background: "#ef4444",
-                borderRadius: "50%",
-                border: "2px solid #1e293b",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "11px",
-                fontWeight: "bold",
-                color: "white",
-                padding: "0 4px"
-              }}>
-                {unreadCount > 99 ? "99+" : unreadCount}
-              </span>
-            )}
-          </div>
-          <div style={{ 
-            width: "1px", 
-            height: "24px", 
-            background: "#4b5563" 
-          }}></div>
-          <div style={{ 
-            display: "flex", 
-            alignItems: "center", 
-            gap: "12px",
-            color: "white",
-            position: "relative"
-          }}>
-            <span style={{ fontSize: "14px", fontWeight: "500" }}>
-              {userInfo?.full_name || "Utilisateur"}
-            </span>
-            <div 
-              style={{ position: "relative", cursor: "pointer" }}
-              onClick={() => {
-                const menu = document.getElementById("profile-menu");
-                if (menu) {
-                  menu.style.display = menu.style.display === "none" ? "block" : "none";
-                }
-              }}
-            >
-              <div style={{
-                width: "36px",
-                height: "36px",
-                borderRadius: "50%",
-                background: "#3b82f6",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "white",
-                fontSize: "14px",
-                fontWeight: "600"
-              }}>
-                {userInfo?.full_name ? userInfo.full_name.charAt(0).toUpperCase() : "U"}
-              </div>
-              <div style={{
-                position: "absolute",
-                bottom: "0",
-                right: "0",
-                width: "12px",
-                height: "12px",
-                background: "#10b981",
-                borderRadius: "50%",
-                border: "2px solid #1e293b"
-              }}></div>
+          <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            {/* Partie gauche - Titre */}
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <div style={{ fontSize: "18px", fontWeight: "600", color: "white" }}>Tableau de bord - Technicien</div>
             </div>
-            <div
-              id="profile-menu"
-              style={{
-                position: "absolute",
-                right: 0,
-                top: "48px",
-                background: "white",
-                borderRadius: "8px",
-                boxShadow: "0 10px 25px rgba(0,0,0,0.15)",
-                padding: "8px 0",
-                minWidth: "160px",
-                zIndex: 50,
-                color: "#111827",
-                display: "none"
-              }}
-            >
+            
+            {/* Partie droite - Actions */}
+            <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
+              {/* Bouton + (création rapide) */}
               <button
                 type="button"
-                onClick={handleLogout}
                 style={{
-                  width: "100%",
-                  padding: "8px 16px",
-                  background: "transparent",
-                  border: "none",
-                  textAlign: "left",
-                  fontSize: "14px",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  color: "#111827"
+                  padding: "8px 12px",
+                  borderRadius: "6px",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  background: "rgba(255,255,255,0.1)",
+                  color: "white",
+                  cursor: "pointer"
                 }}
               >
-                <span style={{ fontSize: "16px" }}>⎋</span>
-                <span>Se déconnecter</span>
+                +
               </button>
+              {/* Sélecteur de statut de disponibilité */}
+              <div style={{ 
+                display: "flex", 
+                alignItems: "center", 
+                gap: "8px"
+              }}>
+                <span style={{ fontSize: "14px", color: "rgba(255,255,255,0.8)" }}>Statut :</span>
+                <select
+                  value={availabilityStatus}
+                  onChange={(e) => updateAvailabilityStatus(e.target.value)}
+                  disabled={updatingStatus}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: "6px",
+                    border: "1px solid rgba(255,255,255,0.2)",
+                    background: "rgba(255,255,255,0.1)",
+                    color: "white",
+                    fontSize: "14px",
+                    cursor: updatingStatus ? "not-allowed" : "pointer",
+                    opacity: updatingStatus ? 0.6 : 1,
+                    outline: "none"
+                  }}
+                >
+                  <option value="disponible" style={{ color: "#333", background: "white" }}>Disponible</option>
+                  <option value="occupé" style={{ color: "#333", background: "white" }}>Occupé</option>
+                  <option value="en pause" style={{ color: "#333", background: "white" }}>En pause</option>
+                </select>
+              </div>
+              <div 
+                onClick={() => setShowNotifications(!showNotifications)}
+                style={{ 
+                  cursor: "pointer", 
+                  width: "24px", 
+                  height: "24px", 
+                  display: "flex", 
+                  alignItems: "center", 
+                  justifyContent: "center",
+                  color: "white",
+                  position: "relative"
+                }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" fill="currentColor"/>
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" fill="currentColor"/>
+                </svg>
+                {unreadCount > 0 && (
+                  <span style={{
+                    position: "absolute",
+                    top: "-5px",
+                    right: "-5px",
+                    minWidth: "18px",
+                    height: "18px",
+                    background: "#ef4444",
+                    borderRadius: "50%",
+                    border: "2px solid #1e293b",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "11px",
+                    fontWeight: "bold",
+                    color: "white",
+                    padding: "0 4px"
+                  }}>
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
+              </div>
+              <div style={{ 
+                width: "1px", 
+                height: "24px", 
+                background: "#4b5563" 
+              }}></div>
+              <div style={{ 
+                display: "flex", 
+                alignItems: "center", 
+                gap: "12px",
+                color: "white",
+                position: "relative"
+              }}>
+                <span style={{ fontSize: "14px", fontWeight: "500" }}>
+                  {userInfo?.full_name || "Utilisateur"}
+                </span>
+                <div 
+                  style={{ position: "relative", cursor: "pointer" }}
+                  onClick={() => {
+                    const menu = document.getElementById("profile-menu");
+                    if (menu) {
+                      menu.style.display = menu.style.display === "none" ? "block" : "none";
+                    }
+                  }}
+                >
+                  <div style={{
+                    width: "36px",
+                    height: "36px",
+                    borderRadius: "50%",
+                    background: "#3b82f6",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "white",
+                    fontSize: "14px",
+                    fontWeight: "600"
+                  }}>
+                    {userInfo?.full_name ? userInfo.full_name.charAt(0).toUpperCase() : "U"}
+                  </div>
+                  <div style={{
+                    position: "absolute",
+                    bottom: "0",
+                    right: "0",
+                    width: "12px",
+                    height: "12px",
+                    background: "#10b981",
+                    borderRadius: "50%",
+                    border: "2px solid #1e293b"
+                  }}></div>
+                </div>
+                <div
+                  id="profile-menu"
+                  style={{
+                    position: "absolute",
+                    right: 0,
+                    top: "48px",
+                    background: "white",
+                    borderRadius: "8px",
+                    boxShadow: "0 10px 25px rgba(0,0,0,0.15)",
+                    padding: "8px 0",
+                    minWidth: "160px",
+                    zIndex: 50,
+                    color: "#111827",
+                    display: "none"
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    style={{
+                      width: "100%",
+                      padding: "8px 16px",
+                      background: "transparent",
+                      border: "none",
+                      textAlign: "left",
+                      fontSize: "14px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      color: "#111827"
+                    }}
+                  >
+                    <span style={{ fontSize: "16px" }}>⎋</span>
+                    <span>Se déconnecter</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -664,176 +738,176 @@ function TechnicianDashboard({ token }: TechnicianDashboardProps) {
           <div style={{ maxWidth: 1200, margin: "0 auto" }}>
             {activeSection === "dashboard" && (
               <>
-            <h2>Tableau de bord - Technicien</h2>
+                <h2>Tableau de bord - Technicien</h2>
 
-      <div style={{ display: "flex", gap: "16px", margin: "24px 0" }}>
-        <div style={{ padding: "16px", background: "white", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)", flex: 1 }}>
-          <div style={{ fontSize: "32px", fontWeight: "bold", color: "#2196f3" }}>{assignedCount}</div>
-          <div style={{ color: "#666", marginTop: "4px" }}>Tickets assignés</div>
-        </div>
-        <div style={{ padding: "16px", background: "white", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)", flex: 1 }}>
-          <div style={{ fontSize: "32px", fontWeight: "bold", color: "#ff9800" }}>{inProgressCount}</div>
-          <div style={{ color: "#666", marginTop: "4px" }}>Tickets en cours</div>
-        </div>
-        <div style={{ padding: "16px", background: "white", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)", flex: 1 }}>
-          <div style={{ fontSize: "32px", fontWeight: "bold", color: "#4caf50" }}>{resolvedCount}</div>
-          <div style={{ color: "#666", marginTop: "4px" }}>Tickets résolus</div>
-        </div>
-      </div>
+                <div style={{ display: "flex", gap: "16px", margin: "24px 0" }}>
+                  <div style={{ padding: "16px", background: "white", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)", flex: 1 }}>
+                    <div style={{ fontSize: "32px", fontWeight: "bold", color: "#2196f3" }}>{assignedCount}</div>
+                    <div style={{ color: "#666", marginTop: "4px" }}>Tickets assignés</div>
+                  </div>
+                  <div style={{ padding: "16px", background: "white", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)", flex: 1 }}>
+                    <div style={{ fontSize: "32px", fontWeight: "bold", color: "#ff9800" }}>{inProgressCount}</div>
+                    <div style={{ color: "#666", marginTop: "4px" }}>Tickets en cours</div>
+                  </div>
+                  <div style={{ padding: "16px", background: "white", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)", flex: 1 }}>
+                    <div style={{ fontSize: "32px", fontWeight: "bold", color: "#4caf50" }}>{resolvedCount}</div>
+                    <div style={{ color: "#666", marginTop: "4px" }}>Tickets résolus</div>
+                  </div>
+                </div>
 
-      <h3 style={{ marginTop: "32px" }}>Mes tickets assignés</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Titre</th>
-            <th>Priorité</th>
-            <th>Statut</th>
-            <th>Assigné le</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {assignedTickets.length === 0 && inProgressTickets.length === 0 ? (
-            <tr>
-              <td colSpan={6} style={{ textAlign: "center", padding: "20px", color: "#999" }}>
-                Aucun ticket assigné
-              </td>
-            </tr>
-          ) : (
-            <>
-              {assignedTickets.map((t) => (
-                <tr key={t.id}>
-                  <td>#{t.number}</td>
-                  <td>{t.title}</td>
-                  <td>
-                    <span style={{
-                      padding: "4px 8px",
-                      borderRadius: "4px",
-                      fontSize: "12px",
-                      fontWeight: "500",
-                      background: t.priority === "critique" ? "#f44336" : t.priority === "haute" ? "#ff9800" : t.priority === "moyenne" ? "#ffc107" : "#9e9e9e",
-                      color: "white"
-                    }}>
-                      {t.priority}
-                    </span>
-                  </td>
-                  <td>
-                    <span style={{
-                      padding: "4px 8px",
-                      borderRadius: "4px",
-                      fontSize: "12px",
-                      background: "#e3f2fd",
-                      color: "#1976d2",
-                      whiteSpace: "nowrap",
-                      display: "inline-block"
-                    }}>
-                      Assigné
-                    </span>
-                  </td>
-                  <td>{t.assigned_at ? new Date(t.assigned_at).toLocaleString("fr-FR") : "N/A"}</td>
-                  <td>
-                    <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                      <button
-                        onClick={() => loadTicketDetails(t.id)}
-                        disabled={loading}
-                        style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#6c757d", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      >
-                        Voir détails
-                      </button>
-                      <button
-                        onClick={() => handleTakeCharge(t.id)}
-                        disabled={loading}
-                        style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      >
-                        Prendre en charge
-                      </button>
-                      <button
-                        onClick={() => setSelectedTicket(t.id)}
-                        disabled={loading}
-                        style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#6c757d", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      >
-                        Ajouter commentaire
-                      </button>
-                      <button
-                        onClick={() => setRequestInfoTicket(t.id)}
-                        disabled={loading}
-                        style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#17a2b8", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      >
-                        Demander info
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {inProgressTickets.map((t) => (
-                <tr key={t.id}>
-                  <td>#{t.number}</td>
-                  <td>{t.title}</td>
-                  <td>
-                    <span style={{
-                      padding: "4px 8px",
-                      borderRadius: "4px",
-                      fontSize: "12px",
-                      fontWeight: "500",
-                      background: t.priority === "critique" ? "#f44336" : t.priority === "haute" ? "#ff9800" : t.priority === "moyenne" ? "#ffc107" : "#9e9e9e",
-                      color: "white"
-                    }}>
-                      {t.priority}
-                    </span>
-                  </td>
-                  <td>
-                    <span style={{
-                      padding: "4px 8px",
-                      borderRadius: "4px",
-                      fontSize: "12px",
-                      background: "#fff3e0",
-                      color: "#f57c00",
-                      whiteSpace: "nowrap",
-                      display: "inline-block"
-                    }}>
-                      En cours
-                    </span>
-                  </td>
-                  <td>{t.assigned_at ? new Date(t.assigned_at).toLocaleString("fr-FR") : "N/A"}</td>
-                  <td>
-                    <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                      <button
-                        onClick={() => loadTicketDetails(t.id)}
-                        disabled={loading}
-                        style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#6c757d", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      >
-                        Voir détails
-                      </button>
-                      <button
-                        onClick={() => setSelectedTicket(t.id)}
-                        disabled={loading}
-                        style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#6c757d", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      >
-                        Ajouter commentaire
-                      </button>
-                      <button
-                        onClick={() => setRequestInfoTicket(t.id)}
-                        disabled={loading}
-                        style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#17a2b8", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      >
-                        Demander info
-                      </button>
-                      <button
-                        onClick={() => handleMarkResolved(t.id)}
-                        disabled={loading}
-                        style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      >
-                        Marquer résolu
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </>
-          )}
-        </tbody>
-      </table>
+                <h3 style={{ marginTop: "32px" }}>Mes tickets assignés</h3>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Titre</th>
+                      <th>Priorité</th>
+                      <th>Statut</th>
+                      <th>Assigné le</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {assignedTickets.length === 0 && inProgressTickets.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} style={{ textAlign: "center", padding: "20px", color: "#999" }}>
+                          Aucun ticket assigné
+                        </td>
+                      </tr>
+                    ) : (
+                      <>
+                        {assignedTickets.map((t) => (
+                          <tr key={t.id}>
+                            <td>#{t.number}</td>
+                            <td>{t.title}</td>
+                            <td>
+                              <span style={{
+                                padding: "4px 8px",
+                                borderRadius: "4px",
+                                fontSize: "12px",
+                                fontWeight: "500",
+                                background: t.priority === "critique" ? "#f44336" : t.priority === "haute" ? "#ff9800" : t.priority === "moyenne" ? "#ffc107" : "#9e9e9e",
+                                color: "white"
+                              }}>
+                                {t.priority}
+                              </span>
+                            </td>
+                            <td>
+                              <span style={{
+                                padding: "4px 8px",
+                                borderRadius: "4px",
+                                fontSize: "12px",
+                                background: "#e3f2fd",
+                                color: "#1976d2",
+                                whiteSpace: "nowrap",
+                                display: "inline-block"
+                              }}>
+                                Assigné
+                              </span>
+                            </td>
+                            <td>{t.assigned_at ? new Date(t.assigned_at).toLocaleString("fr-FR") : "N/A"}</td>
+                            <td>
+                              <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                                <button
+                                  onClick={() => loadTicketDetails(t.id)}
+                                  disabled={loading}
+                                  style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#6c757d", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                                >
+                                  Voir détails
+                                </button>
+                                <button
+                                  onClick={() => handleTakeCharge(t.id)}
+                                  disabled={loading}
+                                  style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                                >
+                                  Prendre en charge
+                                </button>
+                                <button
+                                  onClick={() => setSelectedTicket(t.id)}
+                                  disabled={loading}
+                                  style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#6c757d", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                                >
+                                  Ajouter commentaire
+                                </button>
+                                <button
+                                  onClick={() => setRequestInfoTicket(t.id)}
+                                  disabled={loading}
+                                  style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#17a2b8", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                                >
+                                  Demander info
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {inProgressTickets.map((t) => (
+                          <tr key={t.id}>
+                            <td>#{t.number}</td>
+                            <td>{t.title}</td>
+                            <td>
+                              <span style={{
+                                padding: "4px 8px",
+                                borderRadius: "4px",
+                                fontSize: "12px",
+                                fontWeight: "500",
+                                background: t.priority === "critique" ? "#f44336" : t.priority === "haute" ? "#ff9800" : t.priority === "moyenne" ? "#ffc107" : "#9e9e9e",
+                                color: "white"
+                              }}>
+                                {t.priority}
+                              </span>
+                            </td>
+                            <td>
+                              <span style={{
+                                padding: "4px 8px",
+                                borderRadius: "4px",
+                                fontSize: "12px",
+                                background: "#fff3e0",
+                                color: "#f57c00",
+                                whiteSpace: "nowrap",
+                                display: "inline-block"
+                              }}>
+                                En cours
+                              </span>
+                            </td>
+                            <td>{t.assigned_at ? new Date(t.assigned_at).toLocaleString("fr-FR") : "N/A"}</td>
+                            <td>
+                              <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                                <button
+                                  onClick={() => loadTicketDetails(t.id)}
+                                  disabled={loading}
+                                  style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#6c757d", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                                >
+                                  Voir détails
+                                </button>
+                                <button
+                                  onClick={() => setSelectedTicket(t.id)}
+                                  disabled={loading}
+                                  style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#6c757d", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                                >
+                                  Ajouter commentaire
+                                </button>
+                                <button
+                                  onClick={() => setRequestInfoTicket(t.id)}
+                                  disabled={loading}
+                                  style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#17a2b8", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                                >
+                                  Demander info
+                                </button>
+                                <button
+                                  onClick={() => handleMarkResolved(t.id)}
+                                  disabled={loading}
+                                  style={{ fontSize: "12px", padding: "6px 12px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                                >
+                                  Marquer résolu
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </>
+                    )}
+                  </tbody>
+                </table>
               </>
             )}
 
@@ -1219,7 +1293,6 @@ function TechnicianDashboard({ token }: TechnicianDashboardProps) {
         </div>
       )}
 
-      {/* Modal de notifications */}
       {showNotifications && (
         <div 
           onClick={() => setShowNotifications(false)}

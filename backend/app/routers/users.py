@@ -175,14 +175,38 @@ def get_technician_stats(
     # Logique simple : disponible si moins de 3 tickets en cours, occupé sinon
     availability_status = "disponible" if in_progress_count < 3 else "occupé"
     
-    # Calculer le temps de réponse moyen (temps entre création et première action du technicien)
+    # Calculer le temps de réponse moyen (temps entre assignation et première action du technicien)
+    # Le temps de réponse = temps entre assigned_at et le moment où le ticket passe à "en_cours"
     total_response_time = 0
     response_count = 0
+    
     for ticket in resolved_tickets + closed_tickets:
-        if ticket.created_at and ticket.assigned_at:
-            time_diff = (ticket.assigned_at - ticket.created_at).total_seconds() / 60  # Convertir en minutes
-            total_response_time += time_diff
-            response_count += 1
+        if ticket.assigned_at:
+            # Chercher dans l'historique le moment où le ticket est passé à "en_cours"
+            first_en_cours_history = (
+                db.query(models.TicketHistory)
+                .filter(
+                    models.TicketHistory.ticket_id == ticket.id,
+                    models.TicketHistory.new_status == models.TicketStatus.EN_COURS
+                )
+                .order_by(models.TicketHistory.changed_at.asc())
+                .first()
+            )
+            
+            if first_en_cours_history:
+                # Temps de réponse = temps entre assignation et première prise en charge
+                time_diff = (first_en_cours_history.changed_at - ticket.assigned_at).total_seconds() / 60  # Convertir en minutes
+                if time_diff >= 0:  # S'assurer que le temps est positif
+                    total_response_time += time_diff
+                    response_count += 1
+            # Si pas d'historique "en_cours" mais que le ticket est résolu/clôturé,
+            # on peut utiliser resolved_at comme approximation (mais moins précis)
+            elif ticket.resolved_at and ticket.assigned_at:
+                # Utiliser le temps jusqu'à la résolution comme approximation
+                time_diff = (ticket.resolved_at - ticket.assigned_at).total_seconds() / 60
+                if time_diff >= 0:
+                    total_response_time += time_diff
+                    response_count += 1
     
     avg_response_time_minutes = round(total_response_time / response_count, 0) if response_count > 0 else 0
     
@@ -229,6 +253,61 @@ def get_technician_stats(
         "workload_ratio": workload_ratio,
         "work_hours": work_hours
     }
+
+
+@router.post("/", response_model=schemas.UserRead)
+def create_user(
+    user_in: schemas.UserCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role("DSI", "Admin")),
+):
+    """Créer un nouvel utilisateur (Admin uniquement)"""
+    # Vérifier si l'email ou le username existe déjà
+    existing = (
+        db.query(models.User)
+        .filter(
+            (models.User.email == user_in.email)
+            | (models.User.username == user_in.username)
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User with same email or username already exists",
+        )
+    
+    # Vérifier que le rôle existe
+    role = db.query(models.Role).filter(models.Role.id == user_in.role_id).first()
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Role not found"
+        )
+    
+    db_user = models.User(
+        full_name=user_in.full_name,
+        email=user_in.email,
+        agency=user_in.agency,
+        phone=user_in.phone,
+        username=user_in.username,
+        password_hash=get_password_hash(user_in.password),
+        role_id=user_in.role_id,
+        specialization=user_in.specialization,
+        work_hours=user_in.work_hours,
+        availability_status=user_in.availability_status or "disponible",
+        max_tickets_capacity=user_in.max_tickets_capacity,
+        notes=user_in.notes,
+        status="actif"
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    
+    # Charger le rôle pour la réponse
+    db_user.role = role
+    
+    return db_user
 
 
 @router.get("/", response_model=List[schemas.UserRead])
@@ -317,6 +396,14 @@ def update_user(
         user.status = user_update.status
     if user_update.specialization is not None:
         user.specialization = user_update.specialization
+    if user_update.work_hours is not None:
+        user.work_hours = user_update.work_hours
+    if user_update.availability_status is not None:
+        user.availability_status = user_update.availability_status
+    if user_update.max_tickets_capacity is not None:
+        user.max_tickets_capacity = user_update.max_tickets_capacity
+    if user_update.notes is not None:
+        user.notes = user_update.notes
     if user_update.role_id is not None:
         # Vérifier que le rôle existe
         role = db.query(models.Role).filter(models.Role.id == user_update.role_id).first()
@@ -371,6 +458,40 @@ def delete_user(
     db.commit()
     
     return {"message": "User deleted successfully", "user_id": str(user_id)}
+
+
+@router.put("/me/availability-status", response_model=schemas.UserRead)
+def update_my_availability_status(
+    status_update: schemas.AvailabilityStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Permet au technicien de mettre à jour son propre statut de disponibilité"""
+    # Vérifier que l'utilisateur est un technicien
+    if not current_user.role or current_user.role.name != "Technicien":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only technicians can update their availability status"
+        )
+    
+    # Valider le statut
+    valid_statuses = ["disponible", "occupé", "en pause"]
+    if status_update.availability_status not in valid_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid availability status. Must be one of: {', '.join(valid_statuses)}"
+        )
+    
+    # Mettre à jour le statut
+    current_user.availability_status = status_update.availability_status
+    db.commit()
+    db.refresh(current_user)
+    
+    # Charger le rôle pour la réponse
+    if current_user.role_id:
+        current_user.role = db.query(models.Role).filter(models.Role.id == current_user.role_id).first()
+    
+    return current_user
 
 
 @router.post("/{user_id}/reset-password")

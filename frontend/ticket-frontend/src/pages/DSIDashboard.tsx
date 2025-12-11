@@ -64,6 +64,8 @@ interface Technician {
   success_rate?: number;
   workload_ratio?: string;
   work_hours?: string;
+  max_tickets_capacity?: number | null;
+  notes?: string | null;
 }
 
 interface Notification {
@@ -82,9 +84,116 @@ interface UserRead {
 }
 
 function DSIDashboard({ token }: DSIDashboardProps) {
+  // Fonction pour déterminer le statut de disponibilité basé sur les horaires de travail
+  function getAvailabilityStatus(tech: Technician): string {
+    // Si pas d'horaires définis, utiliser le statut de la base de données
+    if (!tech.work_hours || tech.work_hours.trim() === "") {
+      return tech.availability_status || "disponible";
+    }
+
+    const now = currentTime;
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentTimeMinutes = currentHour * 60 + currentMinute; // Convertir en minutes depuis minuit
+
+    // Parser les horaires
+    // Formats supportés: "08:30-12:30 / 14:00-17:30", "9h-18h", "09:00-18:00"
+    const workHours = tech.work_hours.trim();
+    
+    // Normaliser le format (remplacer "h" par ":00")
+    const normalized = workHours.replace(/(\d+)h/g, "$1:00");
+    
+    // Séparer les plages horaires
+    const ranges = normalized.split("/").map(r => r.trim());
+    
+    let isInWorkTime = false;
+    let isInBreakTime = false;
+    
+    // Si une seule plage (ex: "09:00-18:00")
+    if (ranges.length === 1) {
+      const range = ranges[0];
+      const match = range.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+      if (match) {
+        const startHour = parseInt(match[1]);
+        const startMin = parseInt(match[2]);
+        const endHour = parseInt(match[3]);
+        const endMin = parseInt(match[4]);
+        const startTime = startHour * 60 + startMin;
+        const endTime = endHour * 60 + endMin;
+        
+        isInWorkTime = currentTimeMinutes >= startTime && currentTimeMinutes <= endTime;
+      }
+    } 
+    // Si deux plages (ex: "08:30-12:30 / 14:00-17:30")
+    else if (ranges.length === 2) {
+      const morningRange = ranges[0];
+      const afternoonRange = ranges[1];
+      
+      // Parser la plage du matin
+      const morningMatch = morningRange.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+      if (morningMatch) {
+        const startHour = parseInt(morningMatch[1]);
+        const startMin = parseInt(morningMatch[2]);
+        const endHour = parseInt(morningMatch[3]);
+        const endMin = parseInt(morningMatch[4]);
+        const startTime = startHour * 60 + startMin;
+        const endTime = endHour * 60 + endMin;
+        
+        if (currentTimeMinutes >= startTime && currentTimeMinutes <= endTime) {
+          isInWorkTime = true;
+        }
+      }
+      
+      // Parser la plage de l'après-midi
+      const afternoonMatch = afternoonRange.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+      if (afternoonMatch) {
+        const startHour = parseInt(afternoonMatch[1]);
+        const startMin = parseInt(afternoonMatch[2]);
+        const endHour = parseInt(afternoonMatch[3]);
+        const endMin = parseInt(afternoonMatch[4]);
+        const startTime = startHour * 60 + startMin;
+        const endTime = endHour * 60 + endMin;
+        
+        if (currentTimeMinutes >= startTime && currentTimeMinutes <= endTime) {
+          isInWorkTime = true;
+        }
+      }
+      
+      // Déterminer si on est dans la pause (entre les deux plages)
+      if (morningMatch && afternoonMatch) {
+        const morningEndHour = parseInt(morningMatch[3]);
+        const morningEndMin = parseInt(morningMatch[4]);
+        const afternoonStartHour = parseInt(afternoonMatch[1]);
+        const afternoonStartMin = parseInt(afternoonMatch[2]);
+        const morningEndTime = morningEndHour * 60 + morningEndMin;
+        const afternoonStartTime = afternoonStartHour * 60 + afternoonStartMin;
+        
+        if (currentTimeMinutes > morningEndTime && currentTimeMinutes < afternoonStartTime) {
+          isInBreakTime = true;
+        }
+      }
+    }
+    
+    // PRIORITÉ 1 : Si on est dans la pause horaire automatique, retourner "en pause"
+    // (cela a la priorité la plus haute, même si le technicien s'est marqué "Disponible")
+    if (isInBreakTime) {
+      return "en pause";
+    }
+    
+    // PRIORITÉ 2 : Si on est en dehors des heures de travail, utiliser le statut manuel
+    if (!isInWorkTime) {
+      return tech.availability_status || "disponible";
+    }
+    
+    // PRIORITÉ 3 : Si on est dans les heures de travail, utiliser le statut manuel du technicien
+    // (disponible, occupé, ou en pause selon ce qu'il a choisi)
+    return tech.availability_status || "disponible";
+  }
+
   const [allTickets, setAllTickets] = useState<Ticket[]>([]);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [selectedTechnician, setSelectedTechnician] = useState<string>("");
+  const [currentTime, setCurrentTime] = useState<Date>(new Date()); // Pour forcer le re-render selon l'heure
   const [assignmentNotes, setAssignmentNotes] = useState<string>("");
   const [reopenTicketId, setReopenTicketId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState<string>("");
@@ -124,6 +233,7 @@ function DSIDashboard({ token }: DSIDashboardProps) {
   const [selectedTechnicianDetails, setSelectedTechnicianDetails] = useState<Technician | null>(null);
   const [showTechnicianDetailsModal, setShowTechnicianDetailsModal] = useState<boolean>(false);
   const [, setLoadingTechnicianStats] = useState<boolean>(false);
+  const [showCreateTechnicianModal, setShowCreateTechnicianModal] = useState<boolean>(false);
   const [showEditTechnicianModal, setShowEditTechnicianModal] = useState<boolean>(false);
   const [editingTechnician, setEditingTechnician] = useState<Technician | null>(null);
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState<boolean>(false);
@@ -395,7 +505,9 @@ function DSIDashboard({ token }: DSIDashboardProps) {
     password: "",
     confirmPassword: "",
     generateRandomPassword: true,
-    sendEmail: true
+    sendEmail: true,
+    work_hours: "08:30-12:30 / 14:00-17:30",
+    availability_status: "disponible"
   });
   const [editUser, setEditUser] = useState({
     full_name: "",
@@ -403,7 +515,9 @@ function DSIDashboard({ token }: DSIDashboardProps) {
     phone: "",
     agency: "",
     role: "",
-    status: "actif"
+    status: "actif",
+    work_hours: "08:30-12:30 / 14:00-17:30",
+    availability_status: "disponible"
   });
 
   const handleEditUser = (user: any) => {
@@ -426,7 +540,9 @@ function DSIDashboard({ token }: DSIDashboardProps) {
       phone: user.phone || "",
       agency: user.agency || "",
       role: roleName,
-      status: statusValue
+      status: statusValue,
+      work_hours: user.work_hours || "08:30-12:30 / 14:00-17:30",
+      availability_status: user.availability_status || "disponible"
     });
     setShowEditUserModal(true);
   };
@@ -481,6 +597,12 @@ function DSIDashboard({ token }: DSIDashboardProps) {
         updateData.specialization = "applicatif";
       } else {
         updateData.specialization = null;
+      }
+
+      // Ajouter les informations spécifiques aux techniciens
+      if (editUser.role === "Technicien (Matériel)" || editUser.role === "Technicien (Applicatif)") {
+        updateData.work_hours = editUser.work_hours;
+        updateData.availability_status = editUser.availability_status;
       }
 
       const res = await fetch(`http://localhost:8000/users/${editingUser.id}`, {
@@ -1029,8 +1151,17 @@ function DSIDashboard({ token }: DSIDashboardProps) {
        void loadUnreadCount();
      }, 30000);
      
-     return () => clearInterval(interval);
-   }, [token]);
+    return () => clearInterval(interval);
+  }, [token]);
+
+  // Mettre à jour l'heure actuelle toutes les minutes pour recalculer le statut de disponibilité
+  useEffect(() => {
+    const timeInterval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000); // Mise à jour toutes les minutes
+    
+    return () => clearInterval(timeInterval);
+  }, []);
 
   // Fonction pour filtrer les techniciens selon le type du ticket
   function getFilteredTechnicians(ticketType: string | undefined): Technician[] {
@@ -4070,6 +4201,27 @@ function DSIDashboard({ token }: DSIDashboardProps) {
             <div style={{ padding: "24px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
                 <h2 style={{ fontSize: "28px", fontWeight: "600", color: "#333", margin: 0 }}>Gestion des Techniciens</h2>
+                <button
+                  onClick={() => setShowCreateTechnicianModal(true)}
+                  style={{
+                    padding: "10px 20px",
+                    background: "#28a745",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                    fontSize: "14px",
+                    fontWeight: "500",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px"
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                  Créer un technicien
+                </button>
               </div>
 
               {/* Barre de recherche et filtres */}
@@ -4195,6 +4347,9 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                          .toUpperCase()
                          .substring(0, 2);
                        
+                       // Déterminer le statut de disponibilité basé sur les horaires
+                       const currentStatus = getAvailabilityStatus(tech);
+                       
                        // Couleur de l'avatar basée sur la spécialisation
                        const avatarColor = tech.specialization === "materiel" ? "#ffc107" : "#28a745";
                        
@@ -4234,19 +4389,28 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                                {initials}
                              </div>
                              <div style={{ flex: 1 }}>
-                               <div style={{ fontSize: "18px", fontWeight: "700", color: "#333", marginBottom: "4px" }}>
-                                 {tech.specialization === "materiel" ? "Technicien Matériel" : "Technicien Applicatif"}
+                               <div style={{ fontSize: "18px", fontWeight: "700", color: "#333", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+                                 {tech.full_name}
+                                 <span style={{
+                                   padding: "2px 8px",
+                                   borderRadius: "8px",
+                                   fontSize: "12px",
+                                   fontWeight: "500",
+                                   background: currentStatus === "disponible" ? "#d4edda" : (currentStatus === "occupé" ? "#fff3cd" : "#f8d7da"),
+                                   color: currentStatus === "disponible" ? "#155724" : (currentStatus === "occupé" ? "#856404" : "#721c24")
+                                 }}>
+                                   {currentStatus === "disponible" ? "Disponible" : (currentStatus === "occupé" ? "Occupé" : (currentStatus === "en pause" ? "En pause" : "Actif"))}
+                                 </span>
                                </div>
-                               <div style={{ fontSize: "14px", color: "#666", marginBottom: "8px" }}>DSI</div>
                                <span style={{
                                  padding: "4px 10px",
                                  borderRadius: "12px",
                                  fontSize: "12px",
                                  fontWeight: "500",
-                                 background: "#d4edda",
-                                 color: "#155724"
+                                 background: tech.specialization === "materiel" ? "#fff3cd" : "#d1ecf1",
+                                 color: tech.specialization === "materiel" ? "#856404" : "#0c5460"
                                }}>
-                                 Actif
+                                 {tech.specialization === "materiel" ? "Matériel" : "Applicatif"}
                                </span>
                              </div>
                            </div>
@@ -4737,6 +4901,356 @@ function DSIDashboard({ token }: DSIDashboardProps) {
              </div>
            )}
 
+           {/* Modal Créer un technicien */}
+           {showCreateTechnicianModal && (
+             <div style={{
+               position: "fixed",
+               top: 0,
+               left: 0,
+               width: "100%",
+               height: "100%",
+               background: "rgba(0, 0, 0, 0.5)",
+               display: "flex",
+               justifyContent: "center",
+               alignItems: "center",
+               zIndex: 1000,
+             }}>
+               <div style={{
+                 background: "white",
+                 padding: "30px",
+                 borderRadius: "10px",
+                 boxShadow: "0 5px 15px rgba(0, 0, 0, 0.3)",
+                 width: "90%",
+                 maxWidth: "500px",
+                 position: "relative",
+                 maxHeight: "90vh",
+                 overflowY: "auto"
+               }}>
+                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+                   <h2 style={{ fontSize: "24px", fontWeight: "600", color: "#333", margin: 0 }}>Créer un Technicien</h2>
+                   <button
+                     onClick={() => setShowCreateTechnicianModal(false)}
+                     style={{
+                       background: "transparent",
+                       border: "none",
+                       fontSize: "24px",
+                       cursor: "pointer",
+                       color: "#999",
+                       padding: "0",
+                       width: "30px",
+                       height: "30px",
+                       display: "flex",
+                       alignItems: "center",
+                       justifyContent: "center"
+                     }}
+                   >
+                     ×
+                   </button>
+                 </div>
+
+                 <form onSubmit={async (e) => {
+                   e.preventDefault();
+                   if (!token) return;
+                   
+                   setLoading(true);
+                   try {
+                     // Récupérer le rôle Technicien
+                     const rolesRes = await fetch("http://localhost:8000/auth/roles", {
+                       headers: {
+                         Authorization: `Bearer ${token}`,
+                       },
+                     });
+                     
+                     if (!rolesRes.ok) {
+                       throw new Error("Impossible de récupérer les rôles");
+                     }
+                     
+                     const roles = await rolesRes.json();
+                     const technicianRole = roles.find((r: any) => r.name === "Technicien");
+                     
+                     if (!technicianRole) {
+                       alert("Erreur: Le rôle Technicien n'existe pas");
+                       return;
+                     }
+
+                     const createData: any = {
+                       full_name: (e.target as any).full_name.value,
+                       email: (e.target as any).email.value,
+                       username: (e.target as any).username.value,
+                       password: (e.target as any).password.value,
+                       phone: (e.target as any).phone.value || null,
+                       agency: (e.target as any).agency.value || null,
+                       specialization: (e.target as any).specialization.value || null,
+                       work_hours: (e.target as any).work_hours?.value || null,
+                       availability_status: (e.target as any).availability_status?.value || "disponible",
+                       max_tickets_capacity: (e.target as any).max_tickets_capacity?.value ? parseInt((e.target as any).max_tickets_capacity.value) : null,
+                       notes: (e.target as any).notes?.value || null,
+                       role_id: technicianRole.id
+                     };
+
+                     const res = await fetch("http://localhost:8000/users/", {
+                       method: "POST",
+                       headers: {
+                         "Content-Type": "application/json",
+                         Authorization: `Bearer ${token}`,
+                       },
+                       body: JSON.stringify(createData),
+                     });
+
+                     if (res.ok) {
+                       alert("Technicien créé avec succès");
+                       setShowCreateTechnicianModal(false);
+                       // Recharger les techniciens
+                       const techRes = await fetch("http://localhost:8000/users/technicians", {
+                         headers: {
+                           Authorization: `Bearer ${token}`,
+                         },
+                       });
+                       if (techRes.ok) {
+                         const techData = await techRes.json();
+                         const techsWithStats = await Promise.all(
+                           techData.map(async (tech: any) => {
+                             try {
+                               const statsRes = await fetch(`http://localhost:8000/users/technicians/${tech.id}/stats`, {
+                                 headers: {
+                                   Authorization: `Bearer ${token}`,
+                                 },
+                               });
+                               if (statsRes.ok) {
+                                 const stats = await statsRes.json();
+                                 return { ...tech, ...stats };
+                               }
+                             } catch (err) {
+                               console.error(`Erreur stats pour ${tech.id}:`, err);
+                             }
+                             return { ...tech, work_hours: "08h - 17h", workload_ratio: "0/5", resolved_today: 0, avg_response_time_minutes: 0 };
+                           })
+                         );
+                         setTechnicians(techsWithStats);
+                       }
+                     } else {
+                       const error = await res.json();
+                       alert(`Erreur: ${error.detail || "Impossible de créer le technicien"}`);
+                     }
+                   } catch (err) {
+                     console.error("Erreur:", err);
+                     alert("Une erreur est survenue lors de la création");
+                   } finally {
+                     setLoading(false);
+                   }
+                 }}>
+                   <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Nom complet *</label>
+                       <input
+                         type="text"
+                         name="full_name"
+                         required
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px"
+                         }}
+                       />
+                     </div>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Email *</label>
+                       <input
+                         type="email"
+                         name="email"
+                         required
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px"
+                         }}
+                       />
+                     </div>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Nom d'utilisateur *</label>
+                       <input
+                         type="text"
+                         name="username"
+                         required
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px"
+                         }}
+                       />
+                     </div>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Mot de passe *</label>
+                       <input
+                         type="password"
+                         name="password"
+                         required
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px"
+                         }}
+                       />
+                     </div>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Téléphone</label>
+                       <input
+                         type="tel"
+                         name="phone"
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px"
+                         }}
+                       />
+                     </div>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Agence</label>
+                       <input
+                         type="text"
+                         name="agency"
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px"
+                         }}
+                       />
+                     </div>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Spécialisation *</label>
+                       <select
+                         name="specialization"
+                         required
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px",
+                           background: "white"
+                         }}
+                       >
+                         <option value="">Sélectionner...</option>
+                         <option value="materiel">Matériel</option>
+                         <option value="applicatif">Applicatif</option>
+                       </select>
+                     </div>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Plages horaires</label>
+                       <input
+                         type="text"
+                         name="work_hours"
+                         placeholder="Ex: 08:30-12:30 / 14:00-17:30"
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px"
+                         }}
+                       />
+                     </div>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Statut de disponibilité</label>
+                       <select
+                         name="availability_status"
+                         defaultValue="disponible"
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px",
+                           background: "white"
+                         }}
+                       >
+                         <option value="disponible">Disponible</option>
+                         <option value="occupé">Occupé</option>
+                         <option value="en pause">En pause</option>
+                       </select>
+                     </div>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Capacité max de tickets simultanés</label>
+                       <input
+                         type="number"
+                         name="max_tickets_capacity"
+                         min="1"
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px"
+                         }}
+                       />
+                     </div>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Notes</label>
+                       <textarea
+                         name="notes"
+                         rows={3}
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px",
+                           resize: "vertical"
+                         }}
+                       />
+                     </div>
+                   </div>
+
+                   <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "24px", gap: "12px" }}>
+                     <button
+                       type="button"
+                       onClick={() => setShowCreateTechnicianModal(false)}
+                       style={{
+                         padding: "10px 20px",
+                         background: "#6c757d",
+                         color: "white",
+                         border: "none",
+                         borderRadius: "5px",
+                         cursor: "pointer",
+                         fontSize: "14px"
+                       }}
+                     >
+                       Annuler
+                     </button>
+                     <button
+                       type="submit"
+                       disabled={loading}
+                       style={{
+                         padding: "10px 20px",
+                         background: "#28a745",
+                         color: "white",
+                         border: "none",
+                         borderRadius: "5px",
+                         cursor: "pointer",
+                         fontSize: "14px",
+                         opacity: loading ? 0.7 : 1
+                       }}
+                     >
+                       {loading ? "Création..." : "Créer"}
+                     </button>
+                   </div>
+                 </form>
+               </div>
+             </div>
+           )}
+
            {/* Modal Modifier un technicien */}
            {showEditTechnicianModal && editingTechnician && (
              <div style={{
@@ -4798,7 +5312,11 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                        email: (e.target as any).email.value,
                        phone: (e.target as any).phone.value || null,
                        agency: (e.target as any).agency.value || null,
-                       specialization: (e.target as any).specialization.value || null
+                       specialization: (e.target as any).specialization.value || null,
+                       work_hours: (e.target as any).work_hours?.value || null,
+                       availability_status: (e.target as any).availability_status?.value || null,
+                       max_tickets_capacity: (e.target as any).max_tickets_capacity?.value ? parseInt((e.target as any).max_tickets_capacity.value) : null,
+                       notes: (e.target as any).notes?.value || null
                      };
 
                      const res = await fetch(`http://localhost:8000/users/${editingTechnician.id}`, {
@@ -4935,6 +5453,73 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                          <option value="materiel">Matériel</option>
                          <option value="applicatif">Applicatif</option>
                        </select>
+                     </div>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Plages horaires</label>
+                       <input
+                         type="text"
+                         name="work_hours"
+                         placeholder="Ex: 08:30-12:30 / 14:00-17:30"
+                         defaultValue={editingTechnician.work_hours || ""}
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px"
+                         }}
+                       />
+                     </div>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Statut de disponibilité</label>
+                       <select
+                         name="availability_status"
+                         defaultValue={editingTechnician.availability_status || "disponible"}
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px",
+                           background: "white"
+                         }}
+                       >
+                         <option value="disponible">Disponible</option>
+                         <option value="occupé">Occupé</option>
+                         <option value="en pause">En pause</option>
+                       </select>
+                     </div>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Capacité max de tickets simultanés</label>
+                       <input
+                         type="number"
+                         name="max_tickets_capacity"
+                         min="1"
+                         defaultValue={editingTechnician.max_tickets_capacity || ""}
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px"
+                         }}
+                       />
+                     </div>
+                     <div>
+                       <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>Notes</label>
+                       <textarea
+                         name="notes"
+                         rows={3}
+                         defaultValue={editingTechnician.notes || ""}
+                         style={{
+                           width: "100%",
+                           padding: "10px",
+                           border: "1px solid #ddd",
+                           borderRadius: "5px",
+                           fontSize: "14px",
+                           resize: "vertical"
+                         }}
+                       />
                      </div>
                    </div>
 
@@ -7672,6 +8257,48 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                  </div>
                </div>
 
+               {/* Informations Technicien (conditionnel) */}
+               {(newUser.role === "Technicien (Matériel)" || newUser.role === "Technicien (Applicatif)") && (
+                 <div style={{ marginBottom: "24px" }}>
+                   <h3 style={{ marginBottom: "16px", fontSize: "18px", fontWeight: "600", color: "#333" }}>Informations Technicien</h3>
+                   <div style={{ border: "1px solid #ddd", borderRadius: "8px", padding: "16px", borderLeft: "4px solid #17a2b8", background: "#f8f9fa" }}>
+                     <div style={{ marginBottom: "16px" }}>
+                       <label style={{ display: "block", marginBottom: "8px", color: "#333", fontWeight: "500" }}>
+                         Horaires de Travail
+                       </label>
+                       <input
+                         type="text"
+                         value={newUser.work_hours}
+                         onChange={(e) => setNewUser({ ...newUser, work_hours: e.target.value })}
+                         style={{ width: "100%", padding: "8px 12px", border: "1px solid #ddd", borderRadius: "4px", fontSize: "14px" }}
+                         placeholder="Ex: 08:30-12:30 / 14:00-17:30"
+                       />
+                       <small style={{ display: "block", marginTop: "4px", color: "#666", fontSize: "12px" }}>
+                         Format recommandé: "08:30-12:30 / 14:00-17:30" ou "9h-18h"
+                       </small>
+                     </div>
+                     <div style={{ marginBottom: "0" }}>
+                       <label style={{ display: "block", marginBottom: "8px", color: "#333", fontWeight: "500" }}>
+                         Statut de Disponibilité Initial
+                       </label>
+                       <select
+                         value={newUser.availability_status}
+                         onChange={(e) => setNewUser({ ...newUser, availability_status: e.target.value })}
+                         style={{ width: "100%", padding: "8px 12px", border: "1px solid #ddd", borderRadius: "4px", fontSize: "14px" }}
+                       >
+                         <option value="disponible">Disponible</option>
+                         <option value="occupé">Occupé</option>
+                         <option value="en_pause">En pause</option>
+                         <option value="hors_service">Hors service</option>
+                       </select>
+                       <small style={{ display: "block", marginTop: "4px", color: "#666", fontSize: "12px" }}>
+                         Le statut peut être modifié ultérieurement par le technicien ou l'admin
+                       </small>
+                     </div>
+                   </div>
+                 </div>
+               )}
+
                {/* Mot de Passe */}
                <div style={{ marginBottom: "24px" }}>
                  <h3 style={{ marginBottom: "16px", fontSize: "18px", fontWeight: "600", color: "#333" }}>Mot de Passe</h3>
@@ -7745,7 +8372,9 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                        password: "",
                        confirmPassword: "",
                        generateRandomPassword: true,
-                       sendEmail: true
+                       sendEmail: true,
+                       work_hours: "08:30-12:30 / 14:00-17:30",
+                       availability_status: "disponible"
                      });
                    }}
                    style={{ 
@@ -7940,6 +8569,48 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                    </div>
                  </div>
                </div>
+
+               {/* Informations Technicien (conditionnel) */}
+               {(editUser.role === "Technicien (Matériel)" || editUser.role === "Technicien (Applicatif)") && (
+                 <div style={{ marginBottom: "24px" }}>
+                   <h3 style={{ marginBottom: "16px", fontSize: "18px", fontWeight: "600", color: "#333" }}>Informations Technicien</h3>
+                   <div style={{ border: "1px solid #ddd", borderRadius: "8px", padding: "16px", borderLeft: "4px solid #17a2b8", background: "#f8f9fa" }}>
+                     <div style={{ marginBottom: "16px" }}>
+                       <label style={{ display: "block", marginBottom: "8px", color: "#333", fontWeight: "500" }}>
+                         Horaires de Travail
+                       </label>
+                       <input
+                         type="text"
+                         value={editUser.work_hours}
+                         onChange={(e) => setEditUser({ ...editUser, work_hours: e.target.value })}
+                         style={{ width: "100%", padding: "8px 12px", border: "1px solid #ddd", borderRadius: "4px", fontSize: "14px" }}
+                         placeholder="Ex: 08:30-12:30 / 14:00-17:30"
+                       />
+                       <small style={{ display: "block", marginTop: "4px", color: "#666", fontSize: "12px" }}>
+                         Format recommandé: "08:30-12:30 / 14:00-17:30" ou "9h-18h"
+                       </small>
+                     </div>
+                     <div style={{ marginBottom: "0" }}>
+                       <label style={{ display: "block", marginBottom: "8px", color: "#333", fontWeight: "500" }}>
+                         Statut de Disponibilité
+                       </label>
+                       <select
+                         value={editUser.availability_status}
+                         onChange={(e) => setEditUser({ ...editUser, availability_status: e.target.value })}
+                         style={{ width: "100%", padding: "8px 12px", border: "1px solid #ddd", borderRadius: "4px", fontSize: "14px" }}
+                       >
+                         <option value="disponible">Disponible</option>
+                         <option value="occupé">Occupé</option>
+                         <option value="en_pause">En pause</option>
+                         <option value="hors_service">Hors service</option>
+                       </select>
+                       <small style={{ display: "block", marginTop: "4px", color: "#666", fontSize: "12px" }}>
+                         Le statut peut être modifié ultérieurement par le technicien ou l'admin
+                       </small>
+                     </div>
+                   </div>
+                 </div>
+               )}
 
                {/* Historique */}
                <div style={{ marginBottom: "24px" }}>

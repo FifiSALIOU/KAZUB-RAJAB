@@ -40,6 +40,10 @@ class User(Base):
     profile_photo_url = Column(String(255), nullable=True)
     status = Column(String(20), default="active")
     specialization = Column(String(50), nullable=True)  # Spécialisation : "materiel" ou "applicatif"
+    work_hours = Column(String(200), nullable=True)  # Plages horaires (ex. "08:30-12:30 / 14:00-17:30")
+    availability_status = Column(String(20), nullable=True, default="disponible")  # disponible / occupé / en pause
+    max_tickets_capacity = Column(Integer, nullable=True)  # Capacité max de tickets simultanés
+    notes = Column(Text, nullable=True)  # Notes optionnelles
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login_at = Column(DateTime, nullable=True)
 
