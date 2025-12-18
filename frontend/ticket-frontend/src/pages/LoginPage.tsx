@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import logoImage from "../assets/logo.png";
 
 interface LoginPageProps {
   onLogin: (token: string) => void;
@@ -94,60 +95,144 @@ function LoginPage({ onLogin }: LoginPageProps) {
       flexDirection: "column",
       alignItems: "center",
       justifyContent: "center",
-      background: "#f5f5f5",
-      padding: "20px"
+      background: "linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)",
+      padding: "20px",
+      position: "relative",
+      overflow: "hidden"
     }}>
-      {/* Logo/Titre Systèmes d'Incidents */}
+      {/* Éléments décoratifs en arrière-plan */}
       <div style={{
-        marginBottom: "40px",
-        textAlign: "center"
+        position: "absolute",
+        top: "-100px",
+        right: "-100px",
+        width: "400px",
+        height: "400px",
+        borderRadius: "50%",
+        background: "linear-gradient(135deg, rgba(255, 152, 0, 0.1) 0%, rgba(255, 152, 0, 0.05) 100%)",
+        zIndex: 0
+      }}></div>
+      <div style={{
+        position: "absolute",
+        bottom: "-150px",
+        left: "-150px",
+        width: "500px",
+        height: "500px",
+        borderRadius: "50%",
+        background: "linear-gradient(135deg, rgba(25, 118, 210, 0.08) 0%, rgba(25, 118, 210, 0.03) 100%)",
+        zIndex: 0
+      }}></div>
+
+      {/* Logo Caisse de Sécurité Sociale */}
+      <div style={{
+        marginBottom: "48px",
+        textAlign: "center",
+        position: "relative",
+        zIndex: 1
       }}>
         <div style={{
-          fontSize: "48px",
-          fontWeight: "700",
-          color: "#1e293b",
-          letterSpacing: "-1px",
-          marginBottom: "8px",
-          fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif"
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "20px",
+          marginBottom: "24px"
         }}>
-          SI
+          {/* Logo de l'entreprise */}
+          <img 
+            src={logoImage} 
+            alt="Logo Caisse de Sécurité Sociale"
+            style={{
+              width: "100px",
+              height: "100px",
+              objectFit: "contain"
+            }}
+          />
+          
+          {/* Texte "Caisse de Sécurité Sociale" */}
+          <div style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-start",
+            justifyContent: "center"
+          }}>
+            <div style={{
+              fontSize: "32px",
+              fontWeight: "700",
+              color: "#1a237e",
+              lineHeight: "1.1",
+              letterSpacing: "-0.5px",
+              fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif"
+            }}>
+              Caisse de
+            </div>
+            <div style={{
+              fontSize: "32px",
+              fontWeight: "700",
+              color: "#1a237e",
+              lineHeight: "1.1",
+              letterSpacing: "-0.5px",
+              fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif"
+            }}>
+              Sécurité
+            </div>
+            <div style={{
+              fontSize: "32px",
+              fontWeight: "700",
+              color: "#1a237e",
+              lineHeight: "1.1",
+              letterSpacing: "-0.5px",
+              fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif"
+            }}>
+              Sociale
+            </div>
+          </div>
         </div>
+        
+        {/* Sous-titre Systèmes d'Incidents */}
         <div style={{
-          fontSize: "14px",
-          color: "#64748b",
-          fontWeight: "500",
-          letterSpacing: "2px",
-          textTransform: "uppercase"
+          marginTop: "16px",
+          paddingTop: "24px",
+          borderTop: "2px solid #e0e0e0"
         }}>
-          Systèmes d'Incidents
+          <div style={{
+            fontSize: "18px",
+            color: "#546e7a",
+            fontWeight: "600",
+            letterSpacing: "1.5px",
+            textTransform: "uppercase",
+            marginBottom: "6px"
+          }}>
+            Systèmes d'Incidents
+          </div>
+          <div style={{
+            width: "80px",
+            height: "3px",
+            background: "linear-gradient(90deg, #ff9800, #1976d2)",
+            margin: "0 auto",
+            borderRadius: "2px"
+          }}></div>
         </div>
-        {/* Ligne décorative sous le logo */}
-        <div style={{
-          width: "60px",
-          height: "3px",
-          background: "linear-gradient(90deg, #3b82f6, #8b5cf6)",
-          margin: "12px auto 0",
-          borderRadius: "2px"
-        }}></div>
       </div>
 
       <div style={{ 
-        maxWidth: 500, 
-        width: "100%"
-    }}>
-      <div style={{
-        background: "white",
-          borderRadius: "12px",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-          padding: "40px",
-        marginBottom: "24px"
+        maxWidth: 480, 
+        width: "100%",
+        position: "relative",
+        zIndex: 1
       }}>
+        <div style={{
+          background: "white",
+          borderRadius: "16px",
+          boxShadow: "0 10px 40px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)",
+          padding: "48px",
+          border: "1px solid rgba(0,0,0,0.05)"
+        }}>
           <h1 style={{ 
-            marginBottom: "32px", 
-            fontSize: "28px", 
+            marginBottom: "36px", 
+            fontSize: "26px", 
             fontWeight: "600",
-            color: "#1e293b",
-            textAlign: "center"
+            color: "#1a237e",
+            textAlign: "center",
+            letterSpacing: "-0.3px"
           }}>
             Connexion à votre compte
           </h1>
@@ -170,21 +255,25 @@ function LoginPage({ onLogin }: LoginPageProps) {
                 placeholder="Entrez votre nom d'utilisateur"
                 style={{ 
                   width: "100%",
-                  padding: "12px 16px",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "8px",
-                  fontSize: "14px",
-                  background: "#f9fafb",
-                  transition: "all 0.2s ease",
-                  boxSizing: "border-box"
+                  padding: "14px 18px",
+                  border: "2px solid #e0e0e0",
+                  borderRadius: "10px",
+                  fontSize: "15px",
+                  background: "#fafafa",
+                  transition: "all 0.3s ease",
+                  boxSizing: "border-box",
+                  color: "#1a237e",
+                  fontFamily: "inherit"
                 }}
                 onFocus={(e) => {
-                  e.target.style.borderColor = "#3b82f6";
+                  e.target.style.borderColor = "#ff9800";
                   e.target.style.background = "white";
+                  e.target.style.boxShadow = "0 0 0 3px rgba(255, 152, 0, 0.1)";
                 }}
                 onBlur={(e) => {
-                  e.target.style.borderColor = "#d1d5db";
-                  e.target.style.background = "#f9fafb";
+                  e.target.style.borderColor = "#e0e0e0";
+                  e.target.style.background = "#fafafa";
+                  e.target.style.boxShadow = "none";
                 }}
             />
           </div>
@@ -198,10 +287,15 @@ function LoginPage({ onLogin }: LoginPageProps) {
                   Mot de passe
                 </label>
                 <a href="#" style={{ 
-                  fontSize: "12px", 
-                  color: "#3b82f6",
-                  textDecoration: "none"
-                }}>
+                  fontSize: "13px", 
+                  color: "#1976d2",
+                  textDecoration: "none",
+                  fontWeight: "500",
+                  transition: "color 0.2s ease"
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.color = "#ff9800"}
+                onMouseLeave={(e) => e.currentTarget.style.color = "#1976d2"}
+                >
                   Mot de passe oublié ?
                 </a>
               </div>
@@ -213,21 +307,25 @@ function LoginPage({ onLogin }: LoginPageProps) {
                 placeholder="Entrez votre mot de passe"
                 style={{ 
                   width: "100%",
-                  padding: "12px 16px",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "8px",
-                  fontSize: "14px",
-                  background: "#f9fafb",
-                  transition: "all 0.2s ease",
-                  boxSizing: "border-box"
+                  padding: "14px 18px",
+                  border: "2px solid #e0e0e0",
+                  borderRadius: "10px",
+                  fontSize: "15px",
+                  background: "#fafafa",
+                  transition: "all 0.3s ease",
+                  boxSizing: "border-box",
+                  color: "#1a237e",
+                  fontFamily: "inherit"
                 }}
                 onFocus={(e) => {
-                  e.target.style.borderColor = "#3b82f6";
+                  e.target.style.borderColor = "#ff9800";
                   e.target.style.background = "white";
+                  e.target.style.boxShadow = "0 0 0 3px rgba(255, 152, 0, 0.1)";
                 }}
                 onBlur={(e) => {
-                  e.target.style.borderColor = "#d1d5db";
-                  e.target.style.background = "#f9fafb";
+                  e.target.style.borderColor = "#e0e0e0";
+                  e.target.style.background = "#fafafa";
+                  e.target.style.boxShadow = "none";
                 }}
             />
           </div>
@@ -248,23 +346,33 @@ function LoginPage({ onLogin }: LoginPageProps) {
               type="submit" 
               style={{ 
                 width: "100%",
-                padding: "14px",
-                background: "#3b82f6",
+                padding: "16px",
+                background: "linear-gradient(135deg, #ff9800 0%, #f57c00 100%)",
                 color: "white",
                 border: "none",
-                borderRadius: "8px",
+                borderRadius: "10px",
                 fontSize: "16px",
                 fontWeight: "600",
                 cursor: loading ? "not-allowed" : "pointer",
-                transition: "background 0.2s ease",
-                boxShadow: "0 2px 4px rgba(59, 130, 246, 0.3)"
+                transition: "all 0.3s ease",
+                boxShadow: "0 4px 12px rgba(255, 152, 0, 0.4)",
+                letterSpacing: "0.3px",
+                textTransform: "uppercase",
+                position: "relative",
+                overflow: "hidden"
               }}
               disabled={loading}
               onMouseEnter={(e) => {
-                if (!loading) e.currentTarget.style.background = "#2563eb";
+                if (!loading) {
+                  e.currentTarget.style.background = "linear-gradient(135deg, #f57c00 0%, #e65100 100%)";
+                  e.currentTarget.style.boxShadow = "0 6px 20px rgba(255, 152, 0, 0.5)";
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                }
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = "#3b82f6";
+                e.currentTarget.style.background = "linear-gradient(135deg, #ff9800 0%, #f57c00 100%)";
+                e.currentTarget.style.boxShadow = "0 4px 12px rgba(255, 152, 0, 0.4)";
+                e.currentTarget.style.transform = "translateY(0)";
               }}
             >
               {loading ? "Connexion..." : "Se connecter"}

@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { PanelLeft, Clock3, Users, CheckCircle2, FileBarChart, ChevronRight, ChevronDown } from "lucide-react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
 
 interface SecretaryDashboardProps {
   token: string;
@@ -77,7 +80,6 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [agencyFilter, setAgencyFilter] = useState<string>("all");
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
-  const [showTicketsDropdown, setShowTicketsDropdown] = useState<boolean>(false);
   const [showReportsDropdown, setShowReportsDropdown] = useState<boolean>(false);
   const [selectedReport, setSelectedReport] = useState<string>("");
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -338,6 +340,463 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
     // Par défaut, retourner tous les techniciens
     return technicians;
   }
+
+  const getMostFrequentProblems = () => {
+    // Analyser les titres de tickets pour trouver des patterns récurrents significatifs
+    // Utiliser les titres complets des tickets récurrents plutôt que des mots individuels
+    const ticketGroups: { [key: string]: { title: string; count: number } } = {};
+    
+    allTickets.forEach(ticket => {
+      if (ticket.title) {
+        // Normaliser le titre pour grouper les tickets similaires
+        const normalizedTitle = ticket.title.toLowerCase()
+          .replace(/[^\w\s]/g, '')
+          .trim();
+        
+        // Utiliser les premiers mots significatifs comme clé (3-5 mots)
+        const words = normalizedTitle.split(/\s+/).filter(w => w.length > 2);
+        if (words.length >= 3) {
+          // Prendre les 3-5 premiers mots significatifs
+          const key = words.slice(0, Math.min(5, words.length)).join(' ');
+          
+          if (!ticketGroups[key]) {
+            ticketGroups[key] = { title: ticket.title, count: 0 };
+          }
+          ticketGroups[key].count += 1;
+        }
+      }
+    });
+
+    // Filtrer pour ne garder que les patterns qui apparaissent au moins 2 fois
+    // Retourner TOUS les problèmes (pas de limitation)
+    return Object.values(ticketGroups)
+      .filter(item => item.count >= 2)
+      .sort((a, b) => b.count - a.count)
+      .map(item => ({
+        problème: item.title,
+        occurrences: item.count
+      }));
+  };
+
+  const getRecurringTicketsHistory = () => {
+    // Trouver les tickets avec des titres similaires (problèmes récurrents)
+    const ticketGroups: { [key: string]: Ticket[] } = {};
+    
+    allTickets.forEach(ticket => {
+      if (ticket.title) {
+        // Normaliser le titre pour grouper les tickets similaires
+        const normalizedTitle = ticket.title.toLowerCase()
+          .replace(/[^\w\s]/g, '')
+          .trim();
+        
+        // Utiliser les premiers mots comme clé de regroupement
+        const key = normalizedTitle.split(/\s+/).slice(0, 3).join(' ');
+        
+        if (!ticketGroups[key]) {
+          ticketGroups[key] = [];
+        }
+        ticketGroups[key].push(ticket);
+      }
+    });
+
+    // Retourner TOUS les groupes avec plus d'un ticket (problèmes récurrents) - pas de limitation
+    return Object.entries(ticketGroups)
+      .filter(([_, tickets]) => tickets.length > 1)
+      .sort((a, b) => b[1].length - a[1].length)
+      .map(([_, tickets]) => ({
+        titre: tickets[0].title,
+        occurrences: tickets.length,
+        dernier: tickets.sort((a, b) => {
+          const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return dateB - dateA;
+        })[0].created_at
+      }));
+  };
+
+  const getProblematicApplications = () => {
+    // Analyser les types de tickets et les titres pour identifier les applications/équipements problématiques
+    const typeCounts: { [key: string]: number } = {};
+    
+    allTickets.forEach(ticket => {
+      const type = ticket.type || 'autre';
+      typeCounts[type] = (typeCounts[type] || 0) + 1;
+    });
+
+    return Object.entries(typeCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, count]) => ({
+        application: type === 'materiel' ? 'Matériel' : type === 'applicatif' ? 'Applicatif' : type.charAt(0).toUpperCase() + type.slice(1),
+        tickets: count
+      }));
+  };
+
+  // Fonctions d'export pour les rapports
+  const exportProblemsHistoryToPDF = (reportType: string = "Problèmes récurrents") => {
+    try {
+      const doc = new jsPDF();
+      doc.setFontSize(16);
+      doc.text(`Rapport: ${reportType}`, 14, 20);
+      
+      const problems = getRecurringTicketsHistory();
+      const mostFrequent = getMostFrequentProblems();
+      const problematicApps = getProblematicApplications();
+      
+      if (problems.length > 0) {
+        doc.setFontSize(14);
+        doc.text("Historique des problèmes", 14, 35);
+        
+        const tableData = problems.map(item => [
+          item.titre || "",
+          item.occurrences.toString(),
+          item.dernier ? new Date(item.dernier).toLocaleDateString('fr-FR') : 'N/A'
+        ]);
+        
+        autoTable(doc, {
+          startY: 40,
+          head: [['Problème', 'Occurrences', 'Dernière occurrence']],
+          body: tableData,
+          theme: 'grid',
+          headStyles: { fillColor: [30, 58, 95] },
+        });
+      }
+      
+      if (mostFrequent.length > 0) {
+        const finalY = (doc as any).lastAutoTable?.finalY || 40;
+        doc.setFontSize(14);
+        doc.text("Problèmes les plus fréquents", 14, finalY + 15);
+        
+        const tableData2 = mostFrequent.map(item => [
+          item.problème || "",
+          item.occurrences.toString()
+        ]);
+        
+        autoTable(doc, {
+          startY: finalY + 20,
+          head: [['Problème', 'Occurrences']],
+          body: tableData2,
+          theme: 'grid',
+          headStyles: { fillColor: [30, 58, 95] },
+        });
+      }
+      
+      if (problematicApps.length > 0) {
+        const finalY = (doc as any).lastAutoTable?.finalY || 40;
+        doc.setFontSize(14);
+        doc.text("Applications/équipements problématiques", 14, finalY + 15);
+        
+        const tableData3 = problematicApps.map(item => [
+          item.application || "",
+          item.tickets.toString()
+        ]);
+        
+        autoTable(doc, {
+          startY: finalY + 20,
+          head: [['Application/Équipement', 'Nombre de tickets']],
+          body: tableData3,
+          theme: 'grid',
+          headStyles: { fillColor: [30, 58, 95] },
+        });
+      }
+      
+      doc.save(`Rapport_${reportType.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (error) {
+      console.error("Erreur lors de l'export PDF:", error);
+      alert("Erreur lors de l'export PDF");
+    }
+  };
+
+  // Fonction pour nettoyer les noms de feuilles Excel (caractères interdits: \ / ? * [ ])
+  const sanitizeSheetName = (name: string): string => {
+    // Excel limite les noms de feuilles à 31 caractères et interdit: \ / ? * [ ]
+    return name
+      .replace(/[\\/:?*[\]]/g, '-') // Remplacer les caractères interdits par des tirets
+      .substring(0, 31); // Limiter à 31 caractères
+  };
+
+  const exportProblemsHistoryToExcel = (reportType: string = "Problèmes récurrents") => {
+    try {
+      const problems = getRecurringTicketsHistory();
+      const mostFrequent = getMostFrequentProblems();
+      const problematicApps = getProblematicApplications();
+      
+      const wb = XLSX.utils.book_new();
+      let hasSheets = false;
+      
+      // Feuille 1: Historique des problèmes
+      if (problems.length > 0) {
+        const wsData = [
+          ['Problème', 'Occurrences', 'Dernière occurrence'],
+          ...problems.map(item => [
+            item.titre || "",
+            item.occurrences,
+            item.dernier ? new Date(item.dernier).toLocaleDateString('fr-FR') : 'N/A'
+          ])
+        ];
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+        XLSX.utils.book_append_sheet(wb, ws, sanitizeSheetName("Historique des problèmes"));
+        hasSheets = true;
+      }
+      
+      // Feuille 2: Problèmes les plus fréquents
+      if (mostFrequent.length > 0) {
+        const wsData2 = [
+          ['Problème', 'Occurrences'],
+          ...mostFrequent.map(item => [
+            item.problème || "",
+            item.occurrences
+          ])
+        ];
+        const ws2 = XLSX.utils.aoa_to_sheet(wsData2);
+        XLSX.utils.book_append_sheet(wb, ws2, sanitizeSheetName("Problèmes fréquents"));
+        hasSheets = true;
+      }
+      
+      // Feuille 3: Applications/équipements problématiques
+      if (problematicApps.length > 0) {
+        const wsData3 = [
+          ['Application/Équipement', 'Nombre de tickets'],
+          ...problematicApps.map(item => [
+            item.application || "",
+            item.tickets
+          ])
+        ];
+        const ws3 = XLSX.utils.aoa_to_sheet(wsData3);
+        XLSX.utils.book_append_sheet(wb, ws3, sanitizeSheetName("Applications-Équipements"));
+        hasSheets = true;
+      }
+      
+      // Si aucune feuille n'a été créée, créer une feuille par défaut
+      if (!hasSheets) {
+        const defaultData = [
+          ['Rapport', reportType],
+          ['Date de génération', new Date().toLocaleDateString('fr-FR')],
+          [''],
+          ['Aucune donnée disponible pour ce rapport.']
+        ];
+        const ws = XLSX.utils.aoa_to_sheet(defaultData);
+        XLSX.utils.book_append_sheet(wb, ws, sanitizeSheetName("Rapport"));
+      }
+      
+      // Générer le nom de fichier
+      const fileName = `Rapport_${reportType.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      
+      // Vérifier que le workbook n'est pas vide avant d'écrire
+      if (wb.SheetNames.length === 0) {
+        throw new Error("Le classeur Excel est vide");
+      }
+      
+      // Essayer d'abord avec writeFile, puis avec une méthode alternative si nécessaire
+      try {
+        XLSX.writeFile(wb, fileName);
+      } catch (writeError) {
+        // Méthode alternative utilisant un blob
+        const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        const blob = new Blob([wbout], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+    } catch (error) {
+      console.error("Erreur lors de l'export Excel:", error);
+      const errorMessage = error instanceof Error ? error.message : "Erreur inconnue";
+      alert(`Erreur lors de l'export Excel: ${errorMessage}`);
+    }
+  };
+
+  // Fonction pour obtenir le nom du rapport
+  const getReportName = (reportType?: string): string => {
+    if (reportType) return reportType;
+    const reportNames: { [key: string]: string } = {
+      "statistiques": "Statistiques générales",
+      "metriques": "Métriques de performance",
+      "agence": "Analyses par agence",
+      "technicien": "Analyses par technicien",
+      "evolution": "Évolutions dans le temps",
+      "recurrents": "Problèmes récurrents",
+      "performance": "Rapports de Performance",
+      "tickets": "Rapports Tickets"
+    };
+    return reportNames[selectedReport] || "Rapport";
+  };
+
+  // Fonction générique pour exporter en PDF selon le type de rapport
+  const exportToPDF = (reportType?: string) => {
+    const reportName = getReportName(reportType);
+    try {
+      if (selectedReport === "recurrents") {
+        exportProblemsHistoryToPDF(reportName);
+      } else {
+        // Export générique pour les autres rapports
+        const doc = new jsPDF();
+        doc.setFontSize(16);
+        doc.text(`Rapport: ${reportName}`, 14, 20);
+        doc.setFontSize(12);
+        doc.text(`Date de génération: ${new Date().toLocaleDateString('fr-FR')}`, 14, 30);
+        doc.text(`Généré par: ${userInfo?.full_name || 'Utilisateur'}`, 14, 40);
+        doc.save(`Rapport_${reportName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`);
+      }
+    } catch (error) {
+      console.error("Erreur lors de l'export PDF:", error);
+      alert("Erreur lors de l'export PDF");
+    }
+  };
+
+  // Fonction générique pour exporter en Excel selon le type de rapport
+  const exportToExcel = (reportType?: string) => {
+    const reportName = getReportName(reportType);
+    try {
+      if (selectedReport === "recurrents") {
+        exportProblemsHistoryToExcel(reportName);
+      } else {
+        // Export générique pour les autres rapports
+        const wb = XLSX.utils.book_new();
+        const wsData = [
+          ['Rapport', reportName],
+          ['Date de génération', new Date().toLocaleDateString('fr-FR')],
+          ['Généré par', userInfo?.full_name || 'Utilisateur'],
+          [''],
+          ['Note: Les données détaillées seront disponibles dans une prochaine version.']
+        ];
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+        XLSX.utils.book_append_sheet(wb, ws, sanitizeSheetName("Rapport"));
+        
+        // Vérifier que le workbook n'est pas vide avant d'écrire
+        if (wb.SheetNames.length === 0) {
+          throw new Error("Le classeur Excel est vide");
+        }
+        
+        const fileName = `Rapport_${reportName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`;
+        
+        // Essayer d'abord avec writeFile, puis avec une méthode alternative si nécessaire
+        try {
+          XLSX.writeFile(wb, fileName);
+        } catch (writeError) {
+          // Méthode alternative utilisant un blob
+          const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+          const blob = new Blob([wbout], { type: 'application/octet-stream' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = fileName;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+        }
+      }
+    } catch (error) {
+      console.error("Erreur lors de l'export Excel:", error);
+      const errorMessage = error instanceof Error ? error.message : "Erreur inconnue";
+      alert(`Erreur lors de l'export Excel: ${errorMessage}`);
+    }
+  };
+
+  // Fonction générique pour voir le rapport détaillé
+  const viewDetailedReport = (reportType?: string) => {
+    const reportName = getReportName(reportType);
+    if (selectedReport === "recurrents") {
+      const problems = getRecurringTicketsHistory();
+      const mostFrequent = getMostFrequentProblems();
+      const problematicApps = getProblematicApplications();
+      
+      let reportContent = `RAPPORT: ${reportName}\n`;
+      reportContent += `Date de génération: ${new Date().toLocaleDateString('fr-FR')}\n`;
+      reportContent += `Date de génération (heure): ${new Date().toLocaleTimeString('fr-FR')}\n\n`;
+      
+      reportContent += "=".repeat(80) + "\n";
+      reportContent += "HISTORIQUE DES PROBLÈMES\n";
+      reportContent += "=".repeat(80) + "\n\n";
+      
+      if (problems.length > 0) {
+        problems.forEach((item, index) => {
+          reportContent += `${index + 1}. ${item.titre}\n`;
+          reportContent += `   Occurrences: ${item.occurrences}\n`;
+          reportContent += `   Dernière occurrence: ${item.dernier ? new Date(item.dernier).toLocaleDateString('fr-FR') : 'N/A'}\n\n`;
+        });
+      } else {
+        reportContent += "Aucun problème récurrent dans l'historique.\n\n";
+      }
+      
+      reportContent += "=".repeat(80) + "\n";
+      reportContent += "PROBLÈMES LES PLUS FRÉQUENTS\n";
+      reportContent += "=".repeat(80) + "\n\n";
+      
+      if (mostFrequent.length > 0) {
+        mostFrequent.forEach((item, index) => {
+          reportContent += `${index + 1}. ${item.problème}\n`;
+          reportContent += `   Occurrences: ${item.occurrences}\n\n`;
+        });
+      } else {
+        reportContent += "Aucun problème fréquent identifié.\n\n";
+      }
+      
+      reportContent += "=".repeat(80) + "\n";
+      reportContent += "APPLICATIONS/ÉQUIPEMENTS PROBLÉMATIQUES\n";
+      reportContent += "=".repeat(80) + "\n\n";
+      
+      if (problematicApps.length > 0) {
+        problematicApps.forEach((item, index) => {
+          reportContent += `${index + 1}. ${item.application}\n`;
+          reportContent += `   Nombre de tickets: ${item.tickets}\n\n`;
+        });
+      } else {
+        reportContent += "Aucune application ou équipement problématique identifié.\n\n";
+      }
+      
+      // Afficher le rapport dans une nouvelle fenêtre
+      const newWindow = window.open('', '_blank');
+      if (newWindow) {
+        newWindow.document.write(`
+          <html>
+            <head>
+              <title>Rapport: ${reportName}</title>
+              <style>
+                body { font-family: monospace; padding: 20px; white-space: pre-wrap; }
+                h1 { color: #1e3a5f; }
+              </style>
+            </head>
+            <body>
+              <h1>Rapport: ${reportName}</h1>
+              <pre>${reportContent}</pre>
+            </body>
+          </html>
+        `);
+        newWindow.document.close();
+      }
+    } else {
+      // Afficher un rapport générique pour les autres types
+      const newWindow = window.open('', '_blank');
+      if (newWindow) {
+        newWindow.document.write(`
+          <html>
+            <head>
+              <title>Rapport: ${reportName}</title>
+              <style>
+                body { font-family: monospace; padding: 20px; white-space: pre-wrap; }
+                h1 { color: #1e3a5f; }
+              </style>
+            </head>
+            <body>
+              <h1>Rapport: ${reportName}</h1>
+              <pre>RAPPORT: ${reportName}
+Date de génération: ${new Date().toLocaleDateString('fr-FR')}
+Heure de génération: ${new Date().toLocaleTimeString('fr-FR')}
+
+Ce rapport est actuellement en cours de développement.
+Les données détaillées seront disponibles dans une prochaine version.</pre>
+            </body>
+          </html>
+        `);
+        newWindow.document.close();
+      }
+    }
+  };
 
   async function handleAssign(ticketId: string) {
     if (!selectedTechnician) {
@@ -817,131 +1276,31 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
           </div>
           <div>Tableau de Bord</div>
         </div>
-        <div style={{ position: "relative" }}>
-          <div 
-            onClick={() => setShowTicketsDropdown(!showTicketsDropdown)}
-            style={{ 
-              display: "flex", 
-              alignItems: "center", 
-              gap: "12px", 
-              padding: "12px", 
-              background: activeSection === "tickets" ? "rgba(255,255,255,0.1)" : "transparent",
-              borderRadius: "8px",
-              cursor: "pointer"
-            }}
-          >
-            <div style={{ width: "24px", height: "24px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14,2 14,8 20,8" />
-                <line x1="16" y1="13" x2="8" y2="13" />
-                <line x1="16" y1="17" x2="8" y2="17" />
-                <polyline points="10,9 9,9 8,9" />
-              </svg>
-            </div>
-            <div style={{ flex: 1 }}>Tickets</div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", transition: "transform 0.2s ease" }}>
-              {showTicketsDropdown ? (
-                <ChevronDown size={16} color="white" />
-              ) : (
-                <ChevronRight size={16} color="white" />
-              )}
-            </div>
+        <div 
+          onClick={() => {
+            setStatusFilter("all");
+            setActiveSection("tickets");
+          }}
+          style={{ 
+            display: "flex", 
+            alignItems: "center", 
+            gap: "12px", 
+            padding: "12px", 
+            background: activeSection === "tickets" ? "rgba(255,255,255,0.1)" : "transparent",
+            borderRadius: "8px",
+            cursor: "pointer"
+          }}
+        >
+          <div style={{ width: "24px", height: "24px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14,2 14,8 20,8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10,9 9,9 8,9" />
+            </svg>
           </div>
-          {showTicketsDropdown && (
-            <div style={{ 
-              marginLeft: "36px", 
-              marginTop: "8px", 
-              display: "flex", 
-              flexDirection: "column", 
-              gap: "4px" 
-            }}>
-              <div 
-                onClick={() => {
-                  setStatusFilter("all");
-                  setActiveSection("tickets");
-                }}
-                style={{ 
-                  padding: "8px 12px", 
-                  borderRadius: "4px", 
-                  cursor: "pointer",
-                  background: statusFilter === "all" ? "rgba(255,255,255,0.1)" : "transparent"
-                }}
-              >
-                Tous les tickets
-              </div>
-              <div 
-                onClick={() => {
-                  setStatusFilter("en_attente_analyse");
-                  setActiveSection("tickets");
-                }}
-                style={{ 
-                  padding: "8px 12px", 
-                  borderRadius: "4px", 
-                  cursor: "pointer",
-                  background: statusFilter === "en_attente_analyse" ? "rgba(255,255,255,0.1)" : "transparent"
-                }}
-              >
-                En attente
-              </div>
-              <div 
-                onClick={() => {
-                  setStatusFilter("en_traitement");
-                  setActiveSection("tickets");
-                }}
-                style={{ 
-                  padding: "8px 12px", 
-                  borderRadius: "4px", 
-                  cursor: "pointer",
-                  background: statusFilter === "en_traitement" ? "rgba(255,255,255,0.1)" : "transparent"
-                }}
-              >
-                En traitement
-              </div>
-              <div 
-                onClick={() => {
-                  setStatusFilter("resolu");
-                  setActiveSection("tickets");
-                }}
-                style={{ 
-                  padding: "8px 12px", 
-                  borderRadius: "4px", 
-                  cursor: "pointer",
-                  background: statusFilter === "resolu" ? "rgba(255,255,255,0.1)" : "transparent"
-                }}
-              >
-                Résolus
-              </div>
-              <div 
-                onClick={() => {
-                  setStatusFilter("cloture");
-                  setActiveSection("tickets");
-                }}
-                style={{ 
-                  padding: "8px 12px", 
-                  borderRadius: "4px", 
-                  cursor: "pointer",
-                  background: statusFilter === "cloture" ? "rgba(255,255,255,0.1)" : "transparent"
-                }}
-              >
-                Clôturés
-              </div>
-              <div 
-                onClick={() => {
-                  setStatusFilter("rejete");
-                  setActiveSection("tickets");
-                }}
-                style={{ 
-                  padding: "8px 12px", 
-                  borderRadius: "4px", 
-                  cursor: "pointer",
-                  background: statusFilter === "rejete" ? "rgba(255,255,255,0.1)" : "transparent"
-                }}
-              >
-                Rejetés
-              </div>
-            </div>
-          )}
+          <div>Tickets</div>
         </div>
         {(roleName === "Adjoint DSI" || roleName === "DSI" || roleName === "Admin") && (
           <div style={{ position: "relative" }}>
@@ -1421,9 +1780,106 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
       </div>
 
               <h3 style={{ marginTop: "32px" }}>Tickets Récents</h3>
+              
+              {/* Filtres */}
+              <div style={{ 
+                display: "flex", 
+                gap: "16px", 
+                marginTop: "16px",
+                marginBottom: "24px", 
+                flexWrap: "wrap",
+                background: "white",
+                padding: "16px",
+                borderRadius: "8px",
+                boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+              }}>
+                <div style={{ flex: 1, minWidth: "200px" }}>
+                  <label style={{ display: "block", marginBottom: "8px", fontSize: "14px", fontWeight: "500", color: "#666" }}>Filtrer par statut</label>
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    style={{ 
+                      width: "100%", 
+                      padding: "8px 12px", 
+                      border: "1px solid #ddd", 
+                      borderRadius: "4px",
+                      fontSize: "14px"
+                    }}
+                  >
+                    <option value="all">Tous les statuts</option>
+                    <option value="en_attente_analyse">En attente</option>
+                    <option value="en_traitement">En traitement</option>
+                    <option value="resolu">Résolus</option>
+                    <option value="cloture">Clôturés</option>
+                    <option value="rejete">Rejetés</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1, minWidth: "200px" }}>
+                  <label style={{ display: "block", marginBottom: "8px", fontSize: "14px", fontWeight: "500", color: "#666" }}>Filtrer par agence</label>
+                  <select
+                    value={agencyFilter}
+                    onChange={(e) => setAgencyFilter(e.target.value)}
+                    style={{ 
+                      width: "100%", 
+                      padding: "8px 12px", 
+                      border: "1px solid #ddd", 
+                      borderRadius: "4px",
+                      fontSize: "14px"
+                    }}
+                  >
+                    <option value="all">Toutes les agences</option>
+                    {Array.from(new Set(allTickets.map((t) => (t.creator?.agency || t.user_agency)).filter(Boolean))).map((agency) => (
+                      <option key={agency || ""} value={agency || ""}>{agency}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ flex: 1, minWidth: "200px" }}>
+                  <label style={{ display: "block", marginBottom: "8px", fontSize: "14px", fontWeight: "500", color: "#666" }}>Filtrer par priorité</label>
+                  <select
+                    value={priorityFilter}
+                    onChange={(e) => setPriorityFilter(e.target.value)}
+                    style={{ 
+                      width: "100%", 
+                      padding: "8px 12px", 
+                      border: "1px solid #ddd", 
+                      borderRadius: "4px",
+                      fontSize: "14px"
+                    }}
+                  >
+                    <option value="all">Toutes les priorités</option>
+                    <option value="critique">Critique</option>
+                    <option value="haute">Haute</option>
+                    <option value="moyenne">Moyenne</option>
+                    <option value="faible">Faible</option>
+                  </select>
+                </div>
+              </div>
+              
               {(() => {
-                // Obtenir les 5 derniers tickets récents triés par date de création décroissante
-                const recentTickets = [...allTickets]
+                // Filtrer les tickets selon les filtres sélectionnés
+                let filtered = [...allTickets];
+                
+                // Filtre par statut
+                if (statusFilter !== "all") {
+                  if (statusFilter === "en_traitement") {
+                    filtered = filtered.filter((t) => t.status === "assigne_technicien" || t.status === "en_cours");
+                  } else {
+                    filtered = filtered.filter((t) => t.status === statusFilter);
+                  }
+                }
+                
+                // Filtre par agence
+                if (agencyFilter !== "all") {
+                  filtered = filtered.filter((t) => (t.creator?.agency || t.user_agency) === agencyFilter);
+                }
+                
+                // Filtre par priorité
+                if (priorityFilter !== "all") {
+                  filtered = filtered.filter((t) => t.priority === priorityFilter);
+                }
+                
+                // Obtenir les tickets récents triés par date de création décroissante
+                const recentTickets = filtered
                   .sort((a, b) => {
                     const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
                     const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
@@ -4150,8 +4606,18 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
                     </table>
                   </div>
                   <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter PDF</button>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter Excel</button>
+                    <button 
+                      onClick={() => exportToPDF()}
+                      style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter PDF
+                    </button>
+                    <button 
+                      onClick={() => exportToExcel()}
+                      style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter Excel
+                    </button>
                   </div>
                 </div>
               )}
@@ -4270,8 +4736,18 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
                     </table>
                   </div>
                   <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter PDF</button>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter Excel</button>
+                    <button 
+                      onClick={() => exportToPDF()}
+                      style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter PDF
+                    </button>
+                    <button 
+                      onClick={() => exportToExcel()}
+                      style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter Excel
+                    </button>
                   </div>
                 </div>
               )}
@@ -4313,8 +4789,18 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
                     </table>
                   </div>
                   <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter PDF</button>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter Excel</button>
+                    <button 
+                      onClick={() => exportToPDF()}
+                      style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter PDF
+                    </button>
+                    <button 
+                      onClick={() => exportToExcel()}
+                      style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter Excel
+                    </button>
                   </div>
                 </div>
               )}
@@ -4463,6 +4949,91 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
               {selectedReport === "recurrents" && (
                 <div style={{ background: "white", padding: "24px", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
                   <h3 style={{ marginBottom: "20px", fontSize: "22px", fontWeight: "600", color: "#333" }}>Problèmes récurrents</h3>
+                  
+                  {/* Problèmes les plus fréquents */}
+                  <div style={{ marginBottom: "32px" }}>
+                    <h4 style={{ marginBottom: "16px", fontSize: "18px", fontWeight: "600", color: "#333", display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span>•</span> Problèmes les plus fréquents
+                    </h4>
+                    <div style={{ background: "#f8f9fa", padding: "16px", borderRadius: "8px" }}>
+                      {getMostFrequentProblems().length > 0 ? (
+                        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                          {getMostFrequentProblems().map((problem, index) => (
+                            <li key={index} style={{ 
+                              padding: "12px", 
+                              borderBottom: index < getMostFrequentProblems().length - 1 ? "1px solid #dee2e6" : "none",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center"
+                            }}>
+                              <span style={{ color: "#333", fontSize: "14px", fontWeight: "600" }}>{problem.problème}</span>
+                              <span style={{ 
+                                color: "#666", 
+                                fontSize: "14px", 
+                                fontWeight: "600",
+                                background: "#e3f2fd",
+                                padding: "4px 12px",
+                                borderRadius: "12px"
+                              }}>
+                                {problem.occurrences} occurrence{problem.occurrences > 1 ? 's' : ''}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p style={{ color: "#999", fontSize: "14px", margin: 0, textAlign: "center", padding: "20px" }}>
+                          Aucun problème récurrent identifié
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Historique des problèmes */}
+                  <div style={{ marginBottom: "32px" }}>
+                    <h4 style={{ marginBottom: "16px", fontSize: "18px", fontWeight: "600", color: "#333", display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span>•</span> Historique des problèmes
+                    </h4>
+                    <div style={{ background: "#f8f9fa", padding: "16px", borderRadius: "8px" }}>
+                      {getRecurringTicketsHistory().length > 0 ? (
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ background: "transparent" }}>
+                              <th style={{ padding: "12px", textAlign: "left", borderBottom: "1px solid #dee2e6", fontSize: "12px", fontWeight: "600", color: "#666" }}>Problème</th>
+                              <th style={{ padding: "12px", textAlign: "center", borderBottom: "1px solid #dee2e6", fontSize: "12px", fontWeight: "600", color: "#666" }}>Occurrences</th>
+                              <th style={{ padding: "12px", textAlign: "right", borderBottom: "1px solid #dee2e6", fontSize: "12px", fontWeight: "600", color: "#666" }}>Dernière occurrence</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {getRecurringTicketsHistory().map((item, index) => (
+                              <tr key={index} style={{ borderBottom: index < getRecurringTicketsHistory().length - 1 ? "1px solid #dee2e6" : "none" }}>
+                                <td style={{ padding: "12px", color: "#333", fontSize: "14px" }}>{item.titre}</td>
+                                <td style={{ padding: "12px", textAlign: "center" }}>
+                                  <span style={{ 
+                                    background: "#e3f2fd", 
+                                    color: "#1976d2",
+                                    padding: "4px 12px",
+                                    borderRadius: "12px",
+                                    fontSize: "12px",
+                                    fontWeight: "600"
+                                  }}>
+                                    {item.occurrences}
+                                  </span>
+                                </td>
+                                <td style={{ padding: "12px", textAlign: "right", color: "#666", fontSize: "14px" }}>
+                                  {item.dernier ? new Date(item.dernier).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : 'N/A'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <p style={{ color: "#999", fontSize: "14px", margin: 0, textAlign: "center", padding: "20px" }}>
+                          Aucun problème récurrent dans l'historique
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
                   <div style={{ marginBottom: "24px" }}>
                     <h4 style={{ marginBottom: "12px", fontSize: "18px", fontWeight: "600", color: "#333" }}>Agences avec le plus de tickets</h4>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -4490,8 +5061,24 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
                     </table>
                   </div>
                   <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter PDF</button>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter Excel</button>
+                    <button 
+                      onClick={() => viewDetailedReport("Problèmes récurrents")}
+                      style={{ padding: "10px 20px", backgroundColor: "#1e3a5f", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: "500" }}
+                    >
+                      Voir Rapport
+                    </button>
+                    <button 
+                      onClick={() => exportToPDF("Problèmes récurrents")}
+                      style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter PDF
+                    </button>
+                    <button 
+                      onClick={() => exportToExcel("Problèmes récurrents")}
+                      style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter Excel
+                    </button>
                   </div>
                 </div>
               )}
@@ -4612,8 +5199,18 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
                     </table>
                   </div>
                   <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter PDF</button>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter Excel</button>
+                    <button 
+                      onClick={() => exportToPDF()}
+                      style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter PDF
+                    </button>
+                    <button 
+                      onClick={() => exportToExcel()}
+                      style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter Excel
+                    </button>
                   </div>
                 </div>
               )}
@@ -4694,8 +5291,18 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter PDF</button>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter Excel</button>
+                    <button 
+                      onClick={() => exportToPDF()}
+                      style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter PDF
+                    </button>
+                    <button 
+                      onClick={() => exportToExcel()}
+                      style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter Excel
+                    </button>
                   </div>
                 </div>
               )}
@@ -4732,8 +5339,18 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
                     </table>
                   </div>
                   <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter PDF</button>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter Excel</button>
+                    <button 
+                      onClick={() => exportToPDF()}
+                      style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter PDF
+                    </button>
+                    <button 
+                      onClick={() => exportToExcel()}
+                      style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter Excel
+                    </button>
                   </div>
                 </div>
               )}

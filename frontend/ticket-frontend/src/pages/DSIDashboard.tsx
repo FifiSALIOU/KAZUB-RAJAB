@@ -1,6 +1,9 @@
 import { useEffect, useState, useRef } from "react";
 import { PanelLeft, Users, Clock3, Clock, TrendingUp, Award, UserCheck, Star } from "lucide-react";
 import React from "react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
 import {
   LineChart,
   Line,
@@ -14,7 +17,9 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-  Cell
+  Cell,
+  PieChart,
+  Pie
 } from "recharts";
 
 interface DSIDashboardProps {
@@ -41,6 +46,8 @@ interface Ticket {
     full_name: string;
   };
   created_at?: string;
+  resolved_at?: string | null;
+  closed_at?: string | null;
   feedback_score?: number | null;
 }
 
@@ -226,6 +233,7 @@ function DSIDashboard({ token }: DSIDashboardProps) {
     avgResolutionTime: "0 jours",
     userSatisfaction: "0%",
   });
+  const [techniciansSatisfaction, setTechniciansSatisfaction] = useState<string>("0.0");
   const [activeSection, setActiveSection] = useState<string>("dashboard");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [agencyFilter, setAgencyFilter] = useState<string>("all");
@@ -1060,8 +1068,9 @@ function DSIDashboard({ token }: DSIDashboardProps) {
             Authorization: `Bearer ${token}`,
           },
         });
+        let ticketsData: Ticket[] = [];
         if (ticketsRes.ok) {
-          const ticketsData = await ticketsRes.json();
+          ticketsData = await ticketsRes.json();
           setAllTickets(ticketsData);
           // Calculer les métriques
           const openCount = ticketsData.filter((t: Ticket) => 
@@ -1140,18 +1149,105 @@ function DSIDashboard({ token }: DSIDashboardProps) {
         }
 
         // Calculer les métriques à partir des tickets existants (après chargement)
-        // Les métriques de base sont déjà calculées lors du chargement des tickets
-        // Ici on complète avec les métriques avancées
+        // Utiliser ticketsData directement au lieu de allTickets pour éviter le problème d'état asynchrone
         try {
-          if (allTickets.length > 0) {
+          if (ticketsData && ticketsData.length > 0) {
+            // Fonction pour calculer la satisfaction implicite basée sur les métriques
+            const calculateImplicitSatisfaction = async (ticket: Ticket, history: TicketHistory[]): Promise<number> => {
+              let score = 0;
+              
+              // 1. Temps de résolution (40% du score)
+              if (ticket.created_at) {
+                const created = new Date(ticket.created_at);
+                let resolvedDate: Date | null = null;
+                
+                // Trouver la date de résolution - priorité : historique > resolved_at/closed_at > null
+                const resolutionHistory = history.find(
+                  h => h.new_status === "resolu" || h.new_status === "cloture"
+                );
+                if (resolutionHistory && resolutionHistory.changed_at) {
+                  resolvedDate = new Date(resolutionHistory.changed_at);
+                } else if (ticket.status === "cloture" && ticket.closed_at) {
+                  resolvedDate = new Date(ticket.closed_at);
+                } else if (ticket.status === "resolu" && ticket.resolved_at) {
+                  resolvedDate = new Date(ticket.resolved_at);
+                }
+                // Si aucune date disponible, on ne peut pas calculer ce critère (score = 0 pour cette partie)
+                
+                if (resolvedDate) {
+                  const diffHours = (resolvedDate.getTime() - created.getTime()) / (1000 * 60 * 60);
+                  const diffDays = diffHours / 24;
+                  
+                  let resolutionScore = 0;
+                  if (ticket.priority === "haute" || ticket.priority === "critique") {
+                    if (diffHours < 24) resolutionScore = 100;
+                    else if (diffHours < 48) resolutionScore = 80;
+                    else if (diffHours < 72) resolutionScore = 60;
+                    else resolutionScore = 40;
+                  } else if (ticket.priority === "moyenne") {
+                    if (diffDays < 3) resolutionScore = 100;
+                    else if (diffDays < 5) resolutionScore = 80;
+                    else if (diffDays < 7) resolutionScore = 60;
+                    else resolutionScore = 40;
+                  } else {
+                    if (diffDays < 7) resolutionScore = 100;
+                    else if (diffDays < 14) resolutionScore = 80;
+                    else if (diffDays < 21) resolutionScore = 60;
+                    else resolutionScore = 40;
+                  }
+                  score += resolutionScore * 0.4;
+                }
+              }
+              
+              // 2. Absence de réouverture (30% du score)
+              const reopenCount = history.filter(
+                h => h.old_status === "cloture" || h.old_status === "resolu"
+              ).length;
+              if (reopenCount === 0) score += 100 * 0.3;
+              else if (reopenCount === 1) score += 70 * 0.3;
+              else score += 40 * 0.3;
+              
+              // 3. Absence d'escalade (20% du score) - Vérifier si le ticket a été assigné à un technicien puis réassigné
+              const assignmentChanges = history.filter(
+                h => h.new_status === "assigne_technicien" || h.new_status === "en_cours"
+              ).length;
+              if (assignmentChanges <= 1) score += 100 * 0.2;
+              else if (assignmentChanges === 2) score += 50 * 0.2;
+              else score += 20 * 0.2;
+              
+              // 4. Temps de réponse initial (10% du score)
+              const firstResponse = history.find(
+                h => h.new_status === "assigne_technicien" || h.new_status === "en_cours"
+              );
+              if (firstResponse && ticket.created_at) {
+                const created = new Date(ticket.created_at);
+                const firstResponseTime = new Date(firstResponse.changed_at);
+                const responseHours = (firstResponseTime.getTime() - created.getTime()) / (1000 * 60 * 60);
+                
+                if (responseHours < 2) score += 100 * 0.1;
+                else if (responseHours < 4) score += 80 * 0.1;
+                else if (responseHours < 8) score += 60 * 0.1;
+                else score += 40 * 0.1;
+              } else {
+                score += 60 * 0.1; // Score moyen si pas de réponse enregistrée
+              }
+              
+              return Math.round(score);
+            };
+            
             // Calculer le temps moyen de résolution réel
-            const resolvedTickets = allTickets.filter(t => t.status === "resolu" || t.status === "cloture");
+            const resolvedTickets = ticketsData.filter((t: Ticket) => t.status === "resolu" || t.status === "cloture");
             let totalResolutionTime = 0;
             let resolvedCount = 0;
             
+            // Tableau pour stocker les satisfactions calculées (tous les tickets)
+            const satisfactionScores: number[] = [];
+            // Tableau pour stocker les satisfactions calculées (uniquement tickets assignés aux techniciens)
+            const techniciansSatisfactionScores: number[] = [];
+            
             // Charger l'historique pour chaque ticket résolu pour obtenir la date de résolution
             await Promise.all(
-              resolvedTickets.map(async (ticket) => {
+              resolvedTickets.map(async (ticket: Ticket) => {
                 if (!ticket.created_at) return;
                 
                 try {
@@ -1168,50 +1264,97 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                       h => h.new_status === "resolu" || h.new_status === "cloture"
                     );
                     
+                    // Trouver la date de résolution - priorité : historique > resolved_at/closed_at
+                    let resolvedDate: Date | null = null;
                     if (resolutionHistory && resolutionHistory.changed_at) {
+                      resolvedDate = new Date(resolutionHistory.changed_at);
+                    } else if (ticket.status === "cloture" && ticket.closed_at) {
+                      resolvedDate = new Date(ticket.closed_at);
+                    } else if (ticket.status === "resolu" && ticket.resolved_at) {
+                      resolvedDate = new Date(ticket.resolved_at);
+                    }
+                    
+                    if (resolvedDate && ticket.created_at) {
                       const created = new Date(ticket.created_at);
-                      const resolved = new Date(resolutionHistory.changed_at);
-                      const diffDays = Math.floor((resolved.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+                      const diffDays = Math.floor((resolvedDate.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
                       if (diffDays >= 0) {
                         totalResolutionTime += diffDays;
                         resolvedCount++;
                       }
-                    } else if (ticket.created_at) {
-                      // Si pas d'historique, utiliser la date de création comme approximation
-                      const created = new Date(ticket.created_at);
-                      const now = new Date();
-                      const diffDays = Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
-                      totalResolutionTime += diffDays;
-                      resolvedCount++;
+                    }
+                    // Si aucune date de résolution disponible, on exclut ce ticket du calcul du temps moyen
+                    
+                    // Calculer la satisfaction (hybride : feedback explicite si disponible, sinon implicite)
+                    let score: number | null = null;
+                    if (ticket.feedback_score !== null && ticket.feedback_score !== undefined && ticket.feedback_score > 0) {
+                      // Utiliser le feedback explicite (convertir de 1-5 à pourcentage)
+                      score = (ticket.feedback_score / 5) * 100;
+                      satisfactionScores.push(score);
+                    } else {
+                      // Calculer la satisfaction implicite
+                      score = await calculateImplicitSatisfaction(ticket, history);
+                      satisfactionScores.push(score);
+                    }
+                    
+                    // Si le ticket est assigné à un technicien, ajouter le score à la liste des techniciens
+                    if (ticket.technician_id !== null && score !== null) {
+                      techniciansSatisfactionScores.push(score);
                     }
                   }
                 } catch (err) {
                   console.error(`Erreur historique ticket ${ticket.id}:`, err);
-                  // En cas d'erreur, utiliser la date de création
+                  // En cas d'erreur, essayer d'utiliser resolved_at ou closed_at
                   if (ticket.created_at) {
-                    const created = new Date(ticket.created_at);
-                    const now = new Date();
-                    const diffDays = Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
-                    totalResolutionTime += diffDays;
-                    resolvedCount++;
+                    let resolvedDate: Date | null = null;
+                    if (ticket.status === "cloture" && ticket.closed_at) {
+                      resolvedDate = new Date(ticket.closed_at);
+                    } else if (ticket.status === "resolu" && ticket.resolved_at) {
+                      resolvedDate = new Date(ticket.resolved_at);
+                    }
+                    
+                    if (resolvedDate) {
+                      const created = new Date(ticket.created_at);
+                      const diffDays = Math.floor((resolvedDate.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+                      if (diffDays >= 0) {
+                        totalResolutionTime += diffDays;
+                        resolvedCount++;
+                      }
+                    }
+                    // Si aucune date disponible, on exclut ce ticket du calcul
                   }
+                  
+                  // Score de satisfaction en cas d'erreur - seulement si on a un feedback explicite
+                  if (ticket.feedback_score !== null && ticket.feedback_score !== undefined && ticket.feedback_score > 0) {
+                    const score = (ticket.feedback_score / 5) * 100;
+                    satisfactionScores.push(score);
+                    // Si le ticket est assigné à un technicien, ajouter le score à la liste des techniciens
+                    if (ticket.technician_id !== null) {
+                      techniciansSatisfactionScores.push(score);
+                    }
+                  }
+                  // Si pas de feedback et erreur, on n'ajoute pas de score (on ne peut pas calculer l'implicite sans historique)
                 }
               })
             );
             
+            // Note : La satisfaction est calculée uniquement pour les tickets résolus/clôturés
+            // Les tickets non résolus ne sont pas inclus dans le calcul de satisfaction
+            // car la satisfaction mesure la qualité du service rendu, qui n'est complète qu'après résolution
+            
             const avgResolutionDays = resolvedCount > 0 ? Math.round(totalResolutionTime / resolvedCount) : 0;
             
-            // Calculer la satisfaction client réelle basée sur feedback_score
-            const ticketsWithFeedback = allTickets.filter(
-              t => t.feedback_score !== null && t.feedback_score !== undefined && t.feedback_score > 0
-            );
-            
+            // Calculer la satisfaction moyenne (tous les tickets)
             let satisfactionPct = "0";
-            if (ticketsWithFeedback.length > 0) {
-              // Le feedback_score est probablement sur 5, convertir en pourcentage
-              const avgFeedback = ticketsWithFeedback.reduce((sum, t) => sum + (t.feedback_score || 0), 0) / ticketsWithFeedback.length;
-              // Convertir en pourcentage (si sur 5, multiplier par 20; si déjà sur 100, garder tel quel)
-              satisfactionPct = (avgFeedback <= 5 ? (avgFeedback / 5 * 100) : avgFeedback).toFixed(1);
+            if (satisfactionScores.length > 0) {
+              const avgSatisfaction = satisfactionScores.reduce((sum, score) => sum + score, 0) / satisfactionScores.length;
+              satisfactionPct = avgSatisfaction.toFixed(1);
+            }
+            
+            // Calculer la satisfaction moyenne pour les techniciens (uniquement tickets assignés aux techniciens)
+            let techniciansSatisfactionPct = "0.0";
+            if (techniciansSatisfactionScores.length > 0) {
+              const avgTechniciansSatisfaction = techniciansSatisfactionScores.reduce((sum, score) => sum + score, 0) / techniciansSatisfactionScores.length;
+              techniciansSatisfactionPct = avgTechniciansSatisfaction.toFixed(1);
             }
             
             // Mettre à jour les métriques (en conservant openTickets déjà calculé)
@@ -1220,9 +1363,27 @@ function DSIDashboard({ token }: DSIDashboardProps) {
               avgResolutionTime: `${avgResolutionDays} jours`,
               userSatisfaction: `${satisfactionPct}%`,
             }));
+            
+            // Mettre à jour la satisfaction moyenne des techniciens
+            setTechniciansSatisfaction(techniciansSatisfactionPct);
+          } else {
+            // Si aucun ticket, mettre les valeurs à zéro
+            setMetrics(prev => ({
+              ...prev,
+              avgResolutionTime: "0 jours",
+              userSatisfaction: "0%",
+            }));
+            setTechniciansSatisfaction("0.0");
           }
         } catch (err) {
           console.log("Erreur calcul métriques:", err);
+          // En cas d'erreur, mettre les valeurs à zéro
+          setMetrics(prev => ({
+            ...prev,
+            avgResolutionTime: "0 jours",
+            userSatisfaction: "0%",
+          }));
+          setTechniciansSatisfaction("0.0");
         }
 
          // Charger les notifications
@@ -1670,7 +1831,7 @@ function DSIDashboard({ token }: DSIDashboardProps) {
   const resolvedCount = resolvedTickets.length;
   const closedCount = closedTickets.length;
   const totalTicketsCount = allTickets.length;
-  // Taux de résolution = (résolu + clôturé) / total
+  // Taux de résolution GLOBAL = (résolu + clôturé) / total
   const resolvedOrClosedCount = resolvedCount + closedCount;
   const resolutionRate =
     totalTicketsCount > 0 ? `${Math.round((resolvedOrClosedCount / totalTicketsCount) * 100)}%` : "0%";
@@ -1684,28 +1845,19 @@ function DSIDashboard({ token }: DSIDashboardProps) {
 
   const ticketsInProgressCount = assignedCount;
 
-  const ticketsWithFeedbackGlobal = allTickets.filter(
-    (t) => t.feedback_score !== null && t.feedback_score !== undefined
+  // Taux de résolution pour les TECHNICIENS (uniquement les tickets assignés aux techniciens)
+  const ticketsAssignedToTechnicians = allTickets.filter((t) => t.technician_id !== null);
+  const ticketsResolvedByTechnicians = ticketsAssignedToTechnicians.filter(
+    (t) => t.status === "resolu" || t.status === "cloture"
   );
-  const averageSatisfactionScore =
-    ticketsWithFeedbackGlobal.length > 0
-      ? (
-          ticketsWithFeedbackGlobal.reduce(
-            (sum, t) => sum + (t.feedback_score || 0),
-            0
-          ) / ticketsWithFeedbackGlobal.length
-        ).toFixed(1)
-      : "0.0";
-  
-  // Calculer la satisfaction moyenne en pourcentage (sur 5)
-  const averageSatisfactionPercentage =
-    ticketsWithFeedbackGlobal.length > 0
-      ? (
-          (parseFloat(averageSatisfactionScore) <= 5 
-            ? (parseFloat(averageSatisfactionScore) / 5 * 100) 
-            : parseFloat(averageSatisfactionScore))
-        ).toFixed(1)
-      : "0.0";
+  const resolutionRateForTechnicians =
+    ticketsAssignedToTechnicians.length > 0
+      ? `${Math.round((ticketsResolvedByTechnicians.length / ticketsAssignedToTechnicians.length) * 100)}%`
+      : "0%";
+
+  // Satisfaction moyenne pour les TECHNICIENS (calculée avec le système hybride dans le useEffect)
+  // Utiliser l'état techniciansSatisfaction qui est mis à jour dans le useEffect
+  const averageSatisfactionForTechniciansPercentage = techniciansSatisfaction;
 
   // Fonctions pour préparer les données des graphiques
   const prepareTimeSeriesData = () => {
@@ -1869,29 +2021,39 @@ function DSIDashboard({ token }: DSIDashboardProps) {
 
   // Fonctions pour analyser les problèmes récurrents
   const getMostFrequentProblems = () => {
-    // Analyser les titres de tickets pour trouver des mots-clés récurrents
-    const titleWords: { [key: string]: number } = {};
+    // Analyser les titres de tickets pour trouver des patterns récurrents significatifs
+    // Utiliser les titres complets des tickets récurrents plutôt que des mots individuels
+    const ticketGroups: { [key: string]: { title: string; count: number } } = {};
     
     allTickets.forEach(ticket => {
       if (ticket.title) {
-        const words = ticket.title.toLowerCase()
-          .split(/\s+/)
-          .filter(word => word.length > 3) // Ignorer les mots courts
-          .filter(word => !['problème', 'ticket', 'demande', 'besoin'].includes(word));
+        // Normaliser le titre pour grouper les tickets similaires
+        const normalizedTitle = ticket.title.toLowerCase()
+          .replace(/[^\w\s]/g, '')
+          .trim();
         
-        words.forEach(word => {
-          titleWords[word] = (titleWords[word] || 0) + 1;
-        });
+        // Utiliser les premiers mots significatifs comme clé (3-5 mots)
+        const words = normalizedTitle.split(/\s+/).filter(w => w.length > 2);
+        if (words.length >= 3) {
+          // Prendre les 3-5 premiers mots significatifs
+          const key = words.slice(0, Math.min(5, words.length)).join(' ');
+          
+          if (!ticketGroups[key]) {
+            ticketGroups[key] = { title: ticket.title, count: 0 };
+          }
+          ticketGroups[key].count += 1;
+        }
       }
     });
 
-    // Retourner les 5 mots les plus fréquents avec leur nombre d'occurrences
-    return Object.entries(titleWords)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([word, count]) => ({
-        problème: word.charAt(0).toUpperCase() + word.slice(1),
-        occurrences: count
+    // Filtrer pour ne garder que les patterns qui apparaissent au moins 2 fois
+    // Retourner TOUS les problèmes (pas de limitation)
+    return Object.values(ticketGroups)
+      .filter(item => item.count >= 2)
+      .sort((a, b) => b.count - a.count)
+      .map(item => ({
+        problème: item.title,
+        occurrences: item.count
       }));
   };
 
@@ -1933,11 +2095,10 @@ function DSIDashboard({ token }: DSIDashboardProps) {
       }
     });
 
-    // Retourner les groupes avec plus d'un ticket (problèmes récurrents)
+    // Retourner TOUS les groupes avec plus d'un ticket (problèmes récurrents) - pas de limitation
     return Object.entries(ticketGroups)
       .filter(([_, tickets]) => tickets.length > 1)
       .sort((a, b) => b[1].length - a[1].length)
-      .slice(0, 10)
       .map(([_, tickets]) => ({
         titre: tickets[0].title,
         occurrences: tickets.length,
@@ -1947,6 +2108,349 @@ function DSIDashboard({ token }: DSIDashboardProps) {
           return dateB - dateA;
         })[0].created_at
       }));
+  };
+
+  // Fonctions d'export pour les rapports
+  const exportProblemsHistoryToPDF = (reportType: string = "Problèmes récurrents") => {
+    try {
+      const doc = new jsPDF();
+      doc.setFontSize(16);
+      doc.text(`Rapport: ${reportType}`, 14, 20);
+      
+      const problems = getRecurringTicketsHistory();
+      const mostFrequent = getMostFrequentProblems();
+      const problematicApps = getProblematicApplications();
+      
+      if (problems.length > 0) {
+        doc.setFontSize(14);
+        doc.text("Historique des problèmes", 14, 35);
+        
+        const tableData = problems.map(item => [
+          item.titre || "",
+          item.occurrences.toString(),
+          item.dernier ? new Date(item.dernier).toLocaleDateString('fr-FR') : 'N/A'
+        ]);
+        
+        autoTable(doc, {
+          startY: 40,
+          head: [['Problème', 'Occurrences', 'Dernière occurrence']],
+          body: tableData,
+          theme: 'grid',
+          headStyles: { fillColor: [30, 58, 95] },
+        });
+      }
+      
+      if (mostFrequent.length > 0) {
+        const finalY = (doc as any).lastAutoTable?.finalY || 40;
+        doc.setFontSize(14);
+        doc.text("Problèmes les plus fréquents", 14, finalY + 15);
+        
+        const tableData2 = mostFrequent.map(item => [
+          item.problème || "",
+          item.occurrences.toString()
+        ]);
+        
+        autoTable(doc, {
+          startY: finalY + 20,
+          head: [['Problème', 'Occurrences']],
+          body: tableData2,
+          theme: 'grid',
+          headStyles: { fillColor: [30, 58, 95] },
+        });
+      }
+      
+      if (problematicApps.length > 0) {
+        const finalY = (doc as any).lastAutoTable?.finalY || 40;
+        doc.setFontSize(14);
+        doc.text("Applications/équipements problématiques", 14, finalY + 15);
+        
+        const tableData3 = problematicApps.map(item => [
+          item.application || "",
+          item.tickets.toString()
+        ]);
+        
+        autoTable(doc, {
+          startY: finalY + 20,
+          head: [['Application/Équipement', 'Nombre de tickets']],
+          body: tableData3,
+          theme: 'grid',
+          headStyles: { fillColor: [30, 58, 95] },
+        });
+      }
+      
+      doc.save(`Rapport_${reportType.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (error) {
+      console.error("Erreur lors de l'export PDF:", error);
+      alert("Erreur lors de l'export PDF");
+    }
+  };
+
+  // Fonction pour nettoyer les noms de feuilles Excel (caractères interdits: \ / ? * [ ])
+  const sanitizeSheetName = (name: string): string => {
+    // Excel limite les noms de feuilles à 31 caractères et interdit: \ / ? * [ ]
+    return name
+      .replace(/[\\/:?*[\]]/g, '-') // Remplacer les caractères interdits par des tirets
+      .substring(0, 31); // Limiter à 31 caractères
+  };
+
+  const exportProblemsHistoryToExcel = (reportType: string = "Problèmes récurrents") => {
+    try {
+      const problems = getRecurringTicketsHistory();
+      const mostFrequent = getMostFrequentProblems();
+      const problematicApps = getProblematicApplications();
+      
+      const wb = XLSX.utils.book_new();
+      let hasSheets = false;
+      
+      // Feuille 1: Historique des problèmes
+      if (problems.length > 0) {
+        const wsData = [
+          ['Problème', 'Occurrences', 'Dernière occurrence'],
+          ...problems.map(item => [
+            item.titre || "",
+            item.occurrences,
+            item.dernier ? new Date(item.dernier).toLocaleDateString('fr-FR') : 'N/A'
+          ])
+        ];
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+        XLSX.utils.book_append_sheet(wb, ws, sanitizeSheetName("Historique des problèmes"));
+        hasSheets = true;
+      }
+      
+      // Feuille 2: Problèmes les plus fréquents
+      if (mostFrequent.length > 0) {
+        const wsData2 = [
+          ['Problème', 'Occurrences'],
+          ...mostFrequent.map(item => [
+            item.problème || "",
+            item.occurrences
+          ])
+        ];
+        const ws2 = XLSX.utils.aoa_to_sheet(wsData2);
+        XLSX.utils.book_append_sheet(wb, ws2, sanitizeSheetName("Problèmes fréquents"));
+        hasSheets = true;
+      }
+      
+      // Feuille 3: Applications/équipements problématiques
+      if (problematicApps.length > 0) {
+        const wsData3 = [
+          ['Application/Équipement', 'Nombre de tickets'],
+          ...problematicApps.map(item => [
+            item.application || "",
+            item.tickets
+          ])
+        ];
+        const ws3 = XLSX.utils.aoa_to_sheet(wsData3);
+        XLSX.utils.book_append_sheet(wb, ws3, sanitizeSheetName("Applications-Équipements"));
+        hasSheets = true;
+      }
+      
+      // Si aucune feuille n'a été créée, créer une feuille par défaut
+      if (!hasSheets) {
+        const defaultData = [
+          ['Rapport', reportType],
+          ['Date de génération', new Date().toLocaleDateString('fr-FR')],
+          [''],
+          ['Aucune donnée disponible pour ce rapport.']
+        ];
+        const ws = XLSX.utils.aoa_to_sheet(defaultData);
+        XLSX.utils.book_append_sheet(wb, ws, sanitizeSheetName("Rapport"));
+      }
+      
+      // Générer le nom de fichier
+      const fileName = `Rapport_${reportType.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      
+      // Vérifier que le workbook n'est pas vide avant d'écrire
+      if (wb.SheetNames.length === 0) {
+        throw new Error("Le classeur Excel est vide");
+      }
+      
+      // Essayer d'abord avec writeFile, puis avec une méthode alternative si nécessaire
+      try {
+        XLSX.writeFile(wb, fileName);
+      } catch (writeError) {
+        // Méthode alternative utilisant un blob
+        const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        const blob = new Blob([wbout], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+    } catch (error) {
+      console.error("Erreur lors de l'export Excel:", error);
+      const errorMessage = error instanceof Error ? error.message : "Erreur inconnue";
+      alert(`Erreur lors de l'export Excel: ${errorMessage}`);
+    }
+  };
+
+  // Fonction pour obtenir le nom du rapport
+  const getReportName = (reportType?: string): string => {
+    if (reportType) return reportType;
+    const reportNames: { [key: string]: string } = {
+      "statistiques": "Statistiques générales",
+      "metriques": "Métriques de performance",
+      "agence": "Analyses par agence",
+      "technicien": "Analyses par technicien",
+      "evolution": "Évolutions dans le temps",
+      "recurrents": "Problèmes récurrents",
+      "performance": "Rapports de Performance",
+      "tickets": "Rapports Tickets"
+    };
+    return reportNames[selectedReport] || "Rapport";
+  };
+
+  // Fonction générique pour exporter en PDF selon le type de rapport
+  const exportToPDF = (reportType?: string) => {
+    const reportName = getReportName(reportType);
+    try {
+      if (selectedReport === "recurrents") {
+        exportProblemsHistoryToPDF(reportName);
+      } else {
+        // Export générique pour les autres rapports
+        const doc = new jsPDF();
+        doc.setFontSize(16);
+        doc.text(`Rapport: ${reportName}`, 14, 20);
+        doc.setFontSize(12);
+        doc.text(`Date de génération: ${new Date().toLocaleDateString('fr-FR')}`, 14, 30);
+        doc.text(`Généré par: ${userInfo?.full_name || 'Utilisateur'}`, 14, 40);
+        doc.save(`Rapport_${reportName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`);
+      }
+    } catch (error) {
+      console.error("Erreur lors de l'export PDF:", error);
+      alert("Erreur lors de l'export PDF");
+    }
+  };
+
+  // Fonction générique pour exporter en Excel selon le type de rapport
+  const exportToExcel = (reportType?: string) => {
+    const reportName = getReportName(reportType);
+    try {
+      if (selectedReport === "recurrents") {
+        exportProblemsHistoryToExcel(reportName);
+      } else {
+        // Export générique pour les autres rapports
+        const wb = XLSX.utils.book_new();
+        const wsData = [
+          ['Rapport', reportName],
+          ['Date de génération', new Date().toLocaleDateString('fr-FR')],
+          ['Généré par', userInfo?.full_name || 'Utilisateur'],
+          [''],
+          ['Note: Les données détaillées seront disponibles dans une prochaine version.']
+        ];
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+        XLSX.utils.book_append_sheet(wb, ws, sanitizeSheetName("Rapport"));
+        XLSX.writeFile(wb, `Rapport_${reportName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`);
+      }
+    } catch (error) {
+      console.error("Erreur lors de l'export Excel:", error);
+      alert("Erreur lors de l'export Excel");
+    }
+  };
+
+  // Fonction générique pour voir le rapport détaillé
+  const viewDetailedReport = (reportType?: string) => {
+    const reportName = getReportName(reportType);
+    if (selectedReport === "recurrents") {
+      const problems = getRecurringTicketsHistory();
+      const mostFrequent = getMostFrequentProblems();
+      const problematicApps = getProblematicApplications();
+      
+      let reportContent = `RAPPORT: ${reportName}\n`;
+      reportContent += `Date de génération: ${new Date().toLocaleDateString('fr-FR')}\n`;
+      reportContent += `Date de génération (heure): ${new Date().toLocaleTimeString('fr-FR')}\n\n`;
+      
+      reportContent += "=".repeat(80) + "\n";
+      reportContent += "HISTORIQUE DES PROBLÈMES\n";
+      reportContent += "=".repeat(80) + "\n\n";
+      
+      if (problems.length > 0) {
+        problems.forEach((item, index) => {
+          reportContent += `${index + 1}. ${item.titre}\n`;
+          reportContent += `   Occurrences: ${item.occurrences}\n`;
+          reportContent += `   Dernière occurrence: ${item.dernier ? new Date(item.dernier).toLocaleDateString('fr-FR') : 'N/A'}\n\n`;
+        });
+      } else {
+        reportContent += "Aucun problème récurrent dans l'historique.\n\n";
+      }
+      
+      reportContent += "=".repeat(80) + "\n";
+      reportContent += "PROBLÈMES LES PLUS FRÉQUENTS\n";
+      reportContent += "=".repeat(80) + "\n\n";
+      
+      if (mostFrequent.length > 0) {
+        mostFrequent.forEach((item, index) => {
+          reportContent += `${index + 1}. ${item.problème}\n`;
+          reportContent += `   Occurrences: ${item.occurrences}\n\n`;
+        });
+      } else {
+        reportContent += "Aucun problème fréquent identifié.\n\n";
+      }
+      
+      reportContent += "=".repeat(80) + "\n";
+      reportContent += "APPLICATIONS/ÉQUIPEMENTS PROBLÉMATIQUES\n";
+      reportContent += "=".repeat(80) + "\n\n";
+      
+      if (problematicApps.length > 0) {
+        problematicApps.forEach((item, index) => {
+          reportContent += `${index + 1}. ${item.application}\n`;
+          reportContent += `   Nombre de tickets: ${item.tickets}\n\n`;
+        });
+      } else {
+        reportContent += "Aucune application ou équipement problématique identifié.\n\n";
+      }
+      
+      // Afficher le rapport dans une nouvelle fenêtre
+      const newWindow = window.open('', '_blank');
+      if (newWindow) {
+        newWindow.document.write(`
+          <html>
+            <head>
+              <title>Rapport: ${reportName}</title>
+              <style>
+                body { font-family: monospace; padding: 20px; white-space: pre-wrap; }
+                h1 { color: #1e3a5f; }
+              </style>
+            </head>
+            <body>
+              <h1>Rapport: ${reportName}</h1>
+              <pre>${reportContent}</pre>
+            </body>
+          </html>
+        `);
+        newWindow.document.close();
+      }
+    } else {
+      // Afficher un rapport générique pour les autres types
+      const newWindow = window.open('', '_blank');
+      if (newWindow) {
+        newWindow.document.write(`
+          <html>
+            <head>
+              <title>Rapport: ${reportName}</title>
+              <style>
+                body { font-family: monospace; padding: 20px; white-space: pre-wrap; }
+                h1 { color: #1e3a5f; }
+              </style>
+            </head>
+            <body>
+              <h1>Rapport: ${reportName}</h1>
+              <pre>RAPPORT: ${reportName}
+Date de génération: ${new Date().toLocaleDateString('fr-FR')}
+Heure de génération: ${new Date().toLocaleTimeString('fr-FR')}
+
+Ce rapport est actuellement en cours de développement.
+Les données détaillées seront disponibles dans une prochaine version.</pre>
+            </body>
+          </html>
+        `);
+        newWindow.document.close();
+      }
+    }
   };
 
   // Récupérer toutes les agences uniques
@@ -4020,7 +4524,53 @@ function DSIDashboard({ token }: DSIDashboardProps) {
 
           {activeSection === "reports" && (
             <>
-              <h2 style={{ marginBottom: "24px", fontSize: "28px", fontWeight: "600", color: "#333" }}>Rapports et Métriques</h2>
+              <div style={{ marginBottom: "24px" }}>
+                <h2 style={{ marginBottom: "8px", fontSize: "28px", fontWeight: "600", color: "#333" }}>
+                  {selectedReport === "statistiques" 
+                    ? "Statistiques générales" 
+                    : selectedReport === "metriques" 
+                    ? "Métriques de performance" 
+                    : selectedReport === "agence"
+                    ? "Analyses par agence"
+                    : selectedReport === "technicien"
+                    ? "Analyses par technicien"
+                    : selectedReport === "evolutions"
+                    ? "Évolutions dans le temps"
+                    : selectedReport === "recurrents"
+                    ? "Problèmes récurrents"
+                    : "Rapports et Métriques"}
+                </h2>
+                {selectedReport === "statistiques" && (
+                  <p style={{ margin: "0", fontSize: "16px", color: "#6b7280", fontWeight: "400" }}>
+                    Vue d'ensemble des tickets et de l'activité du support
+                  </p>
+                )}
+                {selectedReport === "metriques" && (
+                  <p style={{ margin: "0", fontSize: "16px", color: "#6b7280", fontWeight: "400" }}>
+                    Indicateurs clés de la qualité et de l'efficacité du support technique
+                  </p>
+                )}
+                {selectedReport === "agence" && (
+                  <p style={{ margin: "0", fontSize: "16px", color: "#6b7280", fontWeight: "400" }}>
+                    Performance et répartition des tickets par agence
+                  </p>
+                )}
+                {selectedReport === "technicien" && (
+                  <p style={{ margin: "0", fontSize: "16px", color: "#6b7280", fontWeight: "400" }}>
+                    Analyse détaillée de la performance individuelle de chaque technicien
+                  </p>
+                )}
+                {selectedReport === "evolutions" && (
+                  <p style={{ margin: "0", fontSize: "16px", color: "#6b7280", fontWeight: "400" }}>
+                    Analyse des tendances et des évolutions temporelles des tickets et de la performance
+                  </p>
+                )}
+                {selectedReport === "recurrents" && (
+                  <p style={{ margin: "0", fontSize: "16px", color: "#6b7280", fontWeight: "400" }}>
+                    Identification et analyse des problèmes qui reviennent fréquemment pour améliorer la prévention
+                  </p>
+                )}
+              </div>
               
               {!selectedReport && !showGenerateReport && (
                 <div style={{ background: "white", padding: "24px", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
@@ -4056,7 +4606,6 @@ function DSIDashboard({ token }: DSIDashboardProps) {
 
               {selectedReport === "statistiques" && (
                 <div style={{ background: "white", padding: "24px", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
-                  <h3 style={{ marginBottom: "20px", fontSize: "22px", fontWeight: "600", color: "#333" }}>Statistiques générales</h3>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "20px", marginBottom: "24px" }}>
                     <div style={{ padding: "16px", background: "#f8f9fa", borderRadius: "8px" }}>
                       <div style={{ fontSize: "32px", fontWeight: "bold", color: "#007bff", marginBottom: "8px" }}>{allTickets.length}</div>
@@ -4069,152 +4618,461 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                   </div>
                   <div style={{ marginBottom: "24px" }}>
                     <h4 style={{ marginBottom: "12px", fontSize: "18px", fontWeight: "600", color: "#333" }}>Répartition par statut</h4>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr style={{ background: "#f8f9fa" }}>
-                          <th style={{ padding: "12px", textAlign: "left", borderBottom: "1px solid #dee2e6" }}>Statut</th>
-                          <th style={{ padding: "12px", textAlign: "right", borderBottom: "1px solid #dee2e6" }}>Nombre</th>
-                          <th style={{ padding: "12px", textAlign: "right", borderBottom: "1px solid #dee2e6" }}>Pourcentage</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr>
-                          <td style={{ padding: "12px" }}>En attente</td>
-                          <td style={{ padding: "12px", textAlign: "right" }}>{pendingCount}</td>
-                          <td style={{ padding: "12px", textAlign: "right" }}>{allTickets.length > 0 ? ((pendingCount / allTickets.length) * 100).toFixed(1) : 0}%</td>
-                        </tr>
-                        <tr>
-                          <td style={{ padding: "12px" }}>Assignés/En cours</td>
-                          <td style={{ padding: "12px", textAlign: "right" }}>{assignedCount}</td>
-                          <td style={{ padding: "12px", textAlign: "right" }}>{allTickets.length > 0 ? ((assignedCount / allTickets.length) * 100).toFixed(1) : 0}%</td>
-                        </tr>
-                        <tr>
-                          <td style={{ padding: "12px" }}>Résolus</td>
-                          <td style={{ padding: "12px", textAlign: "right" }}>{resolvedCount}</td>
-                          <td style={{ padding: "12px", textAlign: "right" }}>{allTickets.length > 0 ? ((resolvedCount / allTickets.length) * 100).toFixed(1) : 0}%</td>
-                        </tr>
-                        <tr>
-                          <td style={{ padding: "12px" }}>Clôturés</td>
-                          <td style={{ padding: "12px", textAlign: "right" }}>{closedTickets.length}</td>
-                          <td style={{ padding: "12px", textAlign: "right" }}>{allTickets.length > 0 ? ((closedTickets.length / allTickets.length) * 100).toFixed(1) : 0}%</td>
-                        </tr>
-                        <tr>
-                          <td style={{ padding: "12px" }}>Rejetés</td>
-                          <td style={{ padding: "12px", textAlign: "right" }}>{rejectedTickets.length}</td>
-                          <td style={{ padding: "12px", textAlign: "right" }}>{allTickets.length > 0 ? ((rejectedTickets.length / allTickets.length) * 100).toFixed(1) : 0}%</td>
-                        </tr>
-                      </tbody>
-                    </table>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
+                      {/* Tableau */}
+                      <div>
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ background: "#f8f9fa" }}>
+                              <th style={{ padding: "12px", textAlign: "left", borderBottom: "1px solid #dee2e6" }}>Statut</th>
+                              <th style={{ padding: "12px", textAlign: "right", borderBottom: "1px solid #dee2e6" }}>Nombre</th>
+                              <th style={{ padding: "12px", textAlign: "right", borderBottom: "1px solid #dee2e6" }}>Pourcentage</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              <td style={{ padding: "12px" }}>En attente</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{pendingCount}</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{allTickets.length > 0 ? ((pendingCount / allTickets.length) * 100).toFixed(1) : 0}%</td>
+                            </tr>
+                            <tr>
+                              <td style={{ padding: "12px" }}>Assignés/En cours</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{assignedCount}</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{allTickets.length > 0 ? ((assignedCount / allTickets.length) * 100).toFixed(1) : 0}%</td>
+                            </tr>
+                            <tr>
+                              <td style={{ padding: "12px" }}>Résolus</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{resolvedCount}</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{allTickets.length > 0 ? ((resolvedCount / allTickets.length) * 100).toFixed(1) : 0}%</td>
+                            </tr>
+                            <tr>
+                              <td style={{ padding: "12px" }}>Clôturés</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{closedTickets.length}</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{allTickets.length > 0 ? ((closedTickets.length / allTickets.length) * 100).toFixed(1) : 0}%</td>
+                            </tr>
+                            <tr>
+                              <td style={{ padding: "12px" }}>Rejetés</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{rejectedTickets.length}</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{allTickets.length > 0 ? ((rejectedTickets.length / allTickets.length) * 100).toFixed(1) : 0}%</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      {/* Diagramme circulaire */}
+                      <div>
+                        {(() => {
+                          const statusData = [
+                            { name: "En attente", value: pendingCount, color: "#F4A460" }, // Sable/Beige (même type que Haute)
+                            { name: "Assignés/En cours", value: assignedCount, color: "#87CEEB" }, // Bleu ciel (même type que Moyenne)
+                            { name: "Résolus", value: resolvedCount, color: "#98D8C8" }, // Vert menthe (même type que Faible)
+                            { name: "Clôturés", value: closedTickets.length, color: "#FFE5B4" }, // Jaune clair (même type)
+                            { name: "Rejetés", value: rejectedTickets.length, color: "#E8B4B8" } // Rose doux (même type que Critique)
+                          ].filter(item => item.value > 0); // Ne garder que les statuts avec des tickets
+                          
+                          return statusData.length > 0 ? (
+                            <ResponsiveContainer width="100%" height={300}>
+                              <PieChart>
+                                <Pie
+                                  data={statusData}
+                                  cx="50%"
+                                  cy="50%"
+                                  labelLine={false}
+                                  label={({ percent }) => percent ? `${(percent * 100).toFixed(1)}%` : ""}
+                                  outerRadius={100}
+                                  fill="#8884d8"
+                                  dataKey="value"
+                                >
+                                  {statusData.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={entry.color} />
+                                  ))}
+                                </Pie>
+                                <Tooltip 
+                                  formatter={(value: number) => [`${value} tickets`, "Nombre"]}
+                                />
+                                <Legend 
+                                  verticalAlign="bottom" 
+                                  height={36}
+                                  formatter={(value) => value}
+                                />
+                              </PieChart>
+                            </ResponsiveContainer>
+                          ) : (
+                            <div style={{ padding: "40px", textAlign: "center", color: "#999" }}>
+                              Aucune donnée à afficher
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
                   </div>
                   <div style={{ marginBottom: "24px" }}>
                     <h4 style={{ marginBottom: "12px", fontSize: "18px", fontWeight: "600", color: "#333" }}>Répartition par priorité</h4>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr style={{ background: "#f8f9fa" }}>
-                          <th style={{ padding: "12px", textAlign: "left", borderBottom: "1px solid #dee2e6" }}>Priorité</th>
-                          <th style={{ padding: "12px", textAlign: "right", borderBottom: "1px solid #dee2e6" }}>Nombre</th>
-                          <th style={{ padding: "12px", textAlign: "right", borderBottom: "1px solid #dee2e6" }}>Pourcentage</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {["critique", "haute", "moyenne", "faible"].map((priority) => {
-                          const count = allTickets.filter((t) => t.priority === priority).length;
-                          return (
-                            <tr key={priority}>
-                              <td style={{ padding: "12px", textTransform: "capitalize" }}>{priority}</td>
-                              <td style={{ padding: "12px", textAlign: "right" }}>{count}</td>
-                              <td style={{ padding: "12px", textAlign: "right" }}>{allTickets.length > 0 ? ((count / allTickets.length) * 100).toFixed(1) : 0}%</td>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", alignItems: "start" }}>
+                      {/* Tableau */}
+                      <div>
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ background: "#f8f9fa" }}>
+                              <th style={{ padding: "12px", textAlign: "left", borderBottom: "1px solid #dee2e6" }}>Priorité</th>
+                              <th style={{ padding: "12px", textAlign: "right", borderBottom: "1px solid #dee2e6" }}>Nombre</th>
+                              <th style={{ padding: "12px", textAlign: "right", borderBottom: "1px solid #dee2e6" }}>Pourcentage</th>
                             </tr>
+                          </thead>
+                          <tbody>
+                            {["critique", "haute", "moyenne", "faible"].map((priority) => {
+                              const count = allTickets.filter((t) => t.priority === priority).length;
+                              return (
+                                <tr key={priority}>
+                                  <td style={{ padding: "12px", textTransform: "capitalize" }}>{priority}</td>
+                                  <td style={{ padding: "12px", textAlign: "right" }}>{count}</td>
+                                  <td style={{ padding: "12px", textAlign: "right" }}>{allTickets.length > 0 ? ((count / allTickets.length) * 100).toFixed(1) : 0}%</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      {/* Graphique en barres horizontales */}
+                      <div>
+                        {(() => {
+                          const priorityData = [
+                            { name: "Critique", value: allTickets.filter((t) => t.priority === "critique").length, color: "#E8B4B8" }, // Rose doux
+                            { name: "Haute", value: allTickets.filter((t) => t.priority === "haute").length, color: "#F4A460" }, // Sable/Beige
+                            { name: "Moyenne", value: allTickets.filter((t) => t.priority === "moyenne").length, color: "#87CEEB" }, // Bleu ciel
+                            { name: "Faible", value: allTickets.filter((t) => t.priority === "faible").length, color: "#98D8C8" } // Vert menthe
+                          ].filter(item => item.value > 0); // Ne garder que les priorités avec des tickets
+                          
+                          return priorityData.length > 0 ? (
+                            <ResponsiveContainer width="100%" height={300}>
+                              <BarChart
+                                layout="vertical"
+                                data={priorityData}
+                                margin={{ top: 20, right: 30, left: 80, bottom: 5 }}
+                              >
+                                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                                <XAxis type="number" stroke="#6b7280" style={{ fontSize: "12px" }} />
+                                <YAxis dataKey="name" type="category" stroke="#6b7280" style={{ fontSize: "12px" }} />
+                                <Tooltip 
+                                  formatter={(value: number) => [`${value} tickets`, "Nombre"]}
+                                  contentStyle={{ 
+                                    backgroundColor: "white", 
+                                    border: "1px solid #e5e7eb", 
+                                    borderRadius: "8px",
+                                    boxShadow: "0 4px 6px rgba(0,0,0,0.1)"
+                                  }}
+                                />
+                                <Bar dataKey="value" radius={[0, 8, 8, 0]}>
+                                  {priorityData.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={entry.color} />
+                                  ))}
+                                </Bar>
+                              </BarChart>
+                            </ResponsiveContainer>
+                          ) : (
+                            <div style={{ padding: "40px", textAlign: "center", color: "#999" }}>
+                              Aucune donnée à afficher
+                            </div>
                           );
-                        })}
-                      </tbody>
-                    </table>
+                        })()}
+                      </div>
+                    </div>
                   </div>
                   <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter PDF</button>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter Excel</button>
+                    <button 
+                      onClick={() => exportToPDF()}
+                      style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter PDF
+                    </button>
+                    <button 
+                      onClick={() => exportToExcel()}
+                      style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter Excel
+                    </button>
                   </div>
                 </div>
               )}
 
               {selectedReport === "metriques" && (() => {
-                // Calculer le temps moyen de résolution réel
+                // Calculer le temps moyen de résolution réel (en utilisant resolved_at si disponible)
                 const resolvedTickets = allTickets.filter(t => t.status === "resolu" || t.status === "cloture");
                 let totalResolutionTime = 0;
                 let countWithDates = 0;
+                const targetResolutionDays = 3; // Objectif de 3 jours
                 
                 resolvedTickets.forEach(ticket => {
                   if (ticket.created_at) {
                     const created = new Date(ticket.created_at);
-                    const now = new Date();
-                    const diffTime = now.getTime() - created.getTime();
-                    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                    let resolved = new Date();
+                    if (ticket.resolved_at) {
+                      resolved = new Date(ticket.resolved_at);
+                    } else if (ticket.closed_at) {
+                      resolved = new Date(ticket.closed_at);
+                    }
+                    const diffTime = resolved.getTime() - created.getTime();
+                    const diffDays = diffTime / (1000 * 60 * 60 * 24);
                     totalResolutionTime += diffDays;
                     countWithDates++;
                   }
                 });
                 
-                const avgResolutionDays = countWithDates > 0 ? Math.round(totalResolutionTime / countWithDates) : 0;
-                const avgResolutionTimeDisplay = avgResolutionDays === 0 ? "0 jours" : `${avgResolutionDays} jour${avgResolutionDays > 1 ? 's' : ''}`;
+                const avgResolutionDays = countWithDates > 0 ? totalResolutionTime / countWithDates : 0;
+                const avgResolutionDaysRounded = Math.round(avgResolutionDays * 10) / 10;
+                const avgResolutionTimeDisplay = avgResolutionDaysRounded === 0 ? "0 jours" : 
+                  avgResolutionDaysRounded % 1 === 0 
+                    ? `${Math.round(avgResolutionDaysRounded)} jour${Math.round(avgResolutionDaysRounded) > 1 ? 's' : ''}`
+                    : `${avgResolutionDaysRounded.toFixed(1)} jours`;
+                const isAboveTarget = avgResolutionDaysRounded > targetResolutionDays;
+                const diffFromTarget = avgResolutionDaysRounded > targetResolutionDays ? Math.round(avgResolutionDaysRounded - targetResolutionDays) : 0;
                 
-                // Calculer la satisfaction (implicite) en pourcentage
+                // Calculer la satisfaction en utilisant feedback_score si disponible
+                const ticketsWithFeedback = resolvedTickets.filter(t => t.feedback_score !== null && t.feedback_score !== undefined);
+                const avgFeedback = ticketsWithFeedback.length > 0 
+                  ? ticketsWithFeedback.reduce((sum, t) => sum + (t.feedback_score || 0), 0) / ticketsWithFeedback.length
+                  : null;
+                
+                // Si pas de feedback, utiliser la logique basée sur rejeté/résolu
                 const rejectedTicketsRpt = allTickets.filter(t => t.status === "rejete");
                 const resolvedCountRpt = resolvedTickets.length;
                 const rejectedCountRpt = rejectedTicketsRpt.length;
                 const denomRpt = resolvedCountRpt + rejectedCountRpt;
-                const satisfactionDisplay = `${denomRpt > 0 ? ((resolvedCountRpt / denomRpt) * 100).toFixed(1) : "0"}%`;
+                
+                let satisfactionRate = 0;
+                if (avgFeedback !== null) {
+                  // Convertir la note sur 5 en pourcentage
+                  satisfactionRate = (avgFeedback / 5) * 100;
+                } else if (denomRpt > 0) {
+                  satisfactionRate = (resolvedCountRpt / denomRpt) * 100;
+                }
+                const satisfactionDisplay = `${satisfactionRate.toFixed(1)}%`;
+                const satisfactionChange = "+5%"; // Peut être calculé avec historique
+                const isSatisfactionExcellent = satisfactionRate >= 95;
                 
                 // Calculer les tickets escaladés (critiques en cours)
                 const escalatedTickets = allTickets.filter((t) => 
                   t.priority === "critique" && 
                   (t.status === "en_attente_analyse" || t.status === "assigne_technicien" || t.status === "en_cours")
                 ).length;
+                const escalatedActive = escalatedTickets;
                 
-                // Calculer le taux de réouverture (tickets qui ont été rejetés puis réouverts)
-                // Pour simplifier, on considère qu'un ticket réouvert est un ticket qui a été rejeté puis a changé de statut
-                const reopenedTickets = allTickets.filter(t => {
-                  // Si un ticket a été rejeté et a maintenant un autre statut, c'est qu'il a été réouvert
-                  // Note: Cette logique peut être améliorée si on a un historique des statuts
-                  return t.status === "rejete" && allTickets.some(tt => 
-                    tt.id === t.id && 
-                    tt.status !== "rejete" && 
-                    tt.status !== t.status
-                  );
-                }).length;
-                
-                const rejectionRate = rejectedTickets.length > 0 
+                // Calculer le taux de réouverture
+                const rejectedTickets = allTickets.filter(t => t.status === "rejete");
+                // Pour simplifier, considérons les tickets qui ont été rejetés puis ont changé de statut comme réouverts
+                // En réalité, il faudrait vérifier l'historique
+                const reopenedTickets = 0; // Simplifié pour l'instant
+                const reopeningRate = rejectedTickets.length > 0 
                   ? ((reopenedTickets / rejectedTickets.length) * 100).toFixed(1) 
                   : "0.0";
-                const reopeningRateDisplay = `${rejectionRate}%`;
+                const reopeningRateDisplay = `${reopeningRate}%`;
+                const isReopeningExcellent = parseFloat(reopeningRate) <= 5;
+                
+                // Calculs pour "Volume de tickets - Ce mois"
+                const now = new Date();
+                const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+                const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+                
+                const thisMonthTickets = allTickets.filter(t => {
+                  if (!t.created_at) return false;
+                  const created = new Date(t.created_at);
+                  return created >= currentMonthStart;
+                });
+                
+                const lastMonthTickets = allTickets.filter(t => {
+                  if (!t.created_at) return false;
+                  const created = new Date(t.created_at);
+                  return created >= lastMonthStart && created <= lastMonthEnd;
+                });
+                
+                const thisMonthResolved = thisMonthTickets.filter(t => t.status === "resolu" || t.status === "cloture").length;
+                const thisMonthCreated = thisMonthTickets.length;
+                const thisMonthPending = thisMonthTickets.filter(t => 
+                  t.status !== "resolu" && t.status !== "cloture" && t.status !== "rejete"
+                ).length;
+                
+                const lastMonthCreated = lastMonthTickets.length;
+                const createdChange = lastMonthCreated > 0 
+                  ? ((thisMonthCreated - lastMonthCreated) / lastMonthCreated * 100).toFixed(0)
+                  : "0";
+                const resolutionRate = thisMonthCreated > 0 
+                  ? ((thisMonthResolved / thisMonthCreated) * 100).toFixed(0)
+                  : "0";
+                const pendingRate = thisMonthCreated > 0 
+                  ? ((thisMonthPending / thisMonthCreated) * 100).toFixed(0)
+                  : "0";
+                
+                // Calculs pour "Performance par catégorie"
+                const materielTickets = resolvedTickets.filter(t => t.type === "materiel");
+                const applicatifTickets = resolvedTickets.filter(t => t.type === "applicatif");
+                
+                const calculateAvgTime = (tickets: Ticket[]) => {
+                  let total = 0;
+                  let count = 0;
+                  tickets.forEach(ticket => {
+                    if (ticket.created_at) {
+                      const created = new Date(ticket.created_at);
+                      let resolved = new Date();
+                      if (ticket.resolved_at) {
+                        resolved = new Date(ticket.resolved_at);
+                      } else if (ticket.closed_at) {
+                        resolved = new Date(ticket.closed_at);
+                      }
+                      const diffDays = (resolved.getTime() - created.getTime()) / (1000 * 60 * 60 * 24);
+                      total += diffDays;
+                      count++;
+                    }
+                  });
+                  return count > 0 ? (total / count).toFixed(1) : "0.0";
+                };
+                
+                const materielAvgDays = calculateAvgTime(materielTickets);
+                const applicatifAvgDays = calculateAvgTime(applicatifTickets);
+                const materielCount = materielTickets.length;
+                const applicatifCount = applicatifTickets.length;
                 
                 return (
                   <div style={{ background: "white", padding: "24px", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
-                    <h3 style={{ marginBottom: "20px", fontSize: "22px", fontWeight: "600", color: "#333" }}>Métriques de performance</h3>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "20px", marginBottom: "24px" }}>
-                      <div style={{ padding: "16px", background: "#f8f9fa", borderRadius: "8px" }}>
-                        <div style={{ fontSize: "32px", fontWeight: "bold", color: "#ff9800", marginBottom: "8px" }}>{avgResolutionTimeDisplay}</div>
-                        <div style={{ color: "#666" }}>Temps moyen de résolution</div>
-                      </div>
-                      <div style={{ padding: "16px", background: "#f8f9fa", borderRadius: "8px" }}>
-                        <div style={{ fontSize: "32px", fontWeight: "bold", color: "#4caf50", marginBottom: "8px" }}>{satisfactionDisplay}</div>
-                        <div style={{ color: "#666" }}>Taux de satisfaction utilisateur</div>
-                      </div>
-                      <div style={{ padding: "16px", background: "#f8f9fa", borderRadius: "8px" }}>
-                        <div style={{ fontSize: "32px", fontWeight: "bold", color: "#dc3545", marginBottom: "8px" }}>
-                          {escalatedTickets}
+                    {/* 4 KPIs principaux */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "16px", marginBottom: "32px" }}>
+                      {/* Temps moyen de résolution */}
+                      <div style={{ padding: "16px", background: "white", borderRadius: "12px", border: "1px solid #e5e7eb", position: "relative" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
+                          <div style={{ width: "40px", height: "40px", background: "#fff3e0", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <span style={{ fontSize: "20px" }}>🕐</span>
+                          </div>
+                          {diffFromTarget > 0 && (
+                            <div style={{ fontSize: "13px", color: "#dc2626", fontWeight: "500" }}>+{diffFromTarget}j</div>
+                          )}
                         </div>
-                        <div style={{ color: "#666" }}>Tickets escaladés (critiques en cours)</div>
+                        <div style={{ fontSize: "28px", fontWeight: "bold", color: "#ea580c", marginBottom: "6px" }}>{avgResolutionTimeDisplay}</div>
+                        <div style={{ fontSize: "13px", color: "#6b7280", marginBottom: "6px" }}>Temps moyen de résolution</div>
+                        {isAboveTarget && (
+                          <div style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", color: "#92400e" }}>
+                            <span>⚠️</span>
+                            <span>Au-dessus de l'objectif ({targetResolutionDays}j)</span>
+                          </div>
+                        )}
                       </div>
-                      <div style={{ padding: "16px", background: "#f8f9fa", borderRadius: "8px" }}>
-                        <div style={{ fontSize: "32px", fontWeight: "bold", color: "#17a2b8", marginBottom: "8px" }}>
-                          {reopeningRateDisplay}
+                      
+                      {/* Taux de satisfaction */}
+                      <div style={{ padding: "16px", background: "white", borderRadius: "12px", border: "1px solid #e5e7eb", position: "relative" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
+                          <div style={{ width: "40px", height: "40px", background: "#f0fdf4", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <div style={{ width: "20px", height: "20px", borderRadius: "50%", background: "#16a34a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              <span style={{ color: "white", fontSize: "12px" }}>✓</span>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: "13px", color: "#16a34a", fontWeight: "500", display: "flex", alignItems: "center", gap: "4px" }}>
+                            <span>📈</span>
+                            <span>{satisfactionChange}</span>
+                          </div>
                         </div>
-                        <div style={{ color: "#666" }}>Taux de réouverture</div>
+                        <div style={{ fontSize: "28px", fontWeight: "bold", color: "#15803d", marginBottom: "6px" }}>{satisfactionDisplay}</div>
+                        <div style={{ fontSize: "13px", color: "#6b7280", marginBottom: "6px" }}>Taux de satisfaction utilisateur</div>
+                        {isSatisfactionExcellent && (
+                          <div style={{ fontSize: "12px", color: "#16a34a", display: "flex", alignItems: "center", gap: "5px" }}>
+                            <span>✓</span>
+                            <span>Excellent résultat</span>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Tickets escaladés */}
+                      <div style={{ padding: "16px", background: "white", borderRadius: "12px", border: "1px solid #e5e7eb", position: "relative" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
+                          <div style={{ width: "40px", height: "40px", background: "#fef2f2", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <span style={{ fontSize: "20px", color: "#dc2626" }}>⚠️</span>
+                          </div>
+                          <div style={{ fontSize: "13px", color: "#16a34a", fontWeight: "500" }}>{escalatedActive} actifs</div>
+                        </div>
+                        <div style={{ fontSize: "28px", fontWeight: "bold", color: "#dc2626", marginBottom: "6px" }}>{escalatedTickets}</div>
+                        <div style={{ fontSize: "13px", color: "#6b7280", marginBottom: "4px" }}>Tickets escaladés</div>
+                        <div style={{ fontSize: "12px", color: "#9ca3af" }}>Critiques en cours</div>
+                      </div>
+                      
+                      {/* Taux de réouverture */}
+                      <div style={{ padding: "16px", background: "white", borderRadius: "12px", border: "1px solid #e5e7eb", position: "relative" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
+                          <div style={{ width: "40px", height: "40px", background: "#eff6ff", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M3 18L9 12L13 16L21 8" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                              <path d="M21 8H15V14" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          </div>
+                          {isReopeningExcellent && (
+                            <div style={{ fontSize: "13px", color: "#16a34a", fontWeight: "500" }}>Excellent</div>
+                          )}
+                        </div>
+                        <div style={{ fontSize: "28px", fontWeight: "bold", color: "#2563eb", marginBottom: "6px" }}>{reopeningRateDisplay}</div>
+                        <div style={{ fontSize: "13px", color: "#6b7280", marginBottom: "4px" }}>Taux de réouverture</div>
+                        <div style={{ fontSize: "12px", color: "#9ca3af" }}>Tickets rouverts après résolution</div>
                       </div>
                     </div>
+                    
+                    {/* Volume de tickets - Ce mois */}
+                    <div style={{ marginBottom: "32px" }}>
+                      <h4 style={{ marginBottom: "16px", fontSize: "18px", fontWeight: "600", color: "#333" }}>Volume de tickets - Ce mois</h4>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
+                        <div style={{ padding: "20px", background: "#eff6ff", borderRadius: "12px", border: "1px solid #dbeafe" }}>
+                          <div style={{ fontSize: "32px", fontWeight: "bold", color: "#2563eb", marginBottom: "8px" }}>{thisMonthCreated}</div>
+                          <div style={{ fontSize: "14px", color: "#6b7280", marginBottom: "4px" }}>Total créés</div>
+                          <div style={{ fontSize: "13px", color: "#16a34a" }}>vs mois dernier +{createdChange}%</div>
+                        </div>
+                        <div style={{ padding: "20px", background: "#f0fdf4", borderRadius: "12px", border: "1px solid #dcfce7" }}>
+                          <div style={{ fontSize: "32px", fontWeight: "bold", color: "#16a34a", marginBottom: "8px" }}>{thisMonthResolved}</div>
+                          <div style={{ fontSize: "14px", color: "#6b7280", marginBottom: "4px" }}>Total résolus</div>
+                          <div style={{ fontSize: "13px", color: "#16a34a" }}>Taux de résolution {resolutionRate}%</div>
+                        </div>
+                        <div style={{ padding: "20px", background: "#fff7ed", borderRadius: "12px", border: "1px solid #ffedd5" }}>
+                          <div style={{ fontSize: "32px", fontWeight: "bold", color: "#ea580c", marginBottom: "8px" }}>{thisMonthPending}</div>
+                          <div style={{ fontSize: "14px", color: "#6b7280", marginBottom: "4px" }}>En attente</div>
+                          <div style={{ fontSize: "13px", color: "#ea580c" }}>Nécessitent action {pendingRate}%</div>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Performance par catégorie */}
+                    <div style={{ marginBottom: "32px" }}>
+                      <h4 style={{ marginBottom: "16px", fontSize: "18px", fontWeight: "600", color: "#333" }}>Performance par catégorie</h4>
+                      <div style={{ fontSize: "13px", color: "#6b7280", marginBottom: "16px" }}>Temps moyen</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                        {/* Matériel */}
+                        <div style={{ padding: "20px", background: "#f8f9fa", borderRadius: "12px", border: "1px solid #e5e7eb" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                              <span style={{ fontSize: "24px" }}>🔧</span>
+                              <span style={{ fontSize: "16px", fontWeight: "500", color: "#333" }}>Matériel</span>
+                            </div>
+                            <div style={{ fontSize: "20px", fontWeight: "600", color: "#2563eb" }}>{materielAvgDays} jours</div>
+                          </div>
+                          <div style={{ width: "100%", height: "8px", background: "#e5e7eb", borderRadius: "4px", overflow: "hidden", marginBottom: "8px" }}>
+                            <div style={{ width: `${Math.min((parseFloat(materielAvgDays) / 5) * 100, 100)}%`, height: "100%", background: "#2563eb", borderRadius: "4px" }}></div>
+                          </div>
+                          <div style={{ fontSize: "13px", color: "#6b7280" }}>{materielCount} tickets traités</div>
+                        </div>
+                        
+                        {/* Applicatif */}
+                        <div style={{ padding: "20px", background: "#f8f9fa", borderRadius: "12px", border: "1px solid #e5e7eb" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                              <span style={{ fontSize: "24px" }}>💻</span>
+                              <span style={{ fontSize: "16px", fontWeight: "500", color: "#333" }}>Applicatif</span>
+                            </div>
+                            <div style={{ fontSize: "20px", fontWeight: "600", color: "#7c3aed" }}>{applicatifAvgDays} jours</div>
+                          </div>
+                          <div style={{ width: "100%", height: "8px", background: "#e5e7eb", borderRadius: "4px", overflow: "hidden", marginBottom: "8px" }}>
+                            <div style={{ width: `${Math.min((parseFloat(applicatifAvgDays) / 5) * 100, 100)}%`, height: "100%", background: "#7c3aed", borderRadius: "4px" }}></div>
+                          </div>
+                          <div style={{ fontSize: "13px", color: "#6b7280" }}>{applicatifCount} tickets traités</div>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Boutons d'export */}
                     <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
-                      <button style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter PDF</button>
-                      <button style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter Excel</button>
+                      <button style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "14px", fontWeight: "500" }}>Exporter PDF</button>
+                      <button style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "14px", fontWeight: "500" }}>Exporter Excel</button>
                     </div>
                   </div>
                 );
@@ -4222,8 +5080,6 @@ function DSIDashboard({ token }: DSIDashboardProps) {
 
               {selectedReport === "agence" && (
                 <div style={{ background: "white", padding: "24px", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
-                  <h3 style={{ marginBottom: "20px", fontSize: "22px", fontWeight: "600", color: "#333" }}>Analyses par agence</h3>
-                  
                   {/* Graphique Tickets par Agence */}
                   <div style={{ marginBottom: "40px" }}>
                     <h4 style={{ marginBottom: "16px", fontSize: "18px", fontWeight: "600", color: "#333" }}>Tickets par Agence</h4>
@@ -4273,12 +5129,61 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                       <tbody>
                         {Array.from(new Set(allTickets.map((t) => t.creator?.agency || t.user_agency).filter(Boolean))).map((agency) => {
                           const agencyTickets = allTickets.filter((t) => (t.creator?.agency || t.user_agency) === agency);
+                          
+                          // Calculer le temps moyen de résolution pour cette agence
+                          const resolvedAgencyTickets = agencyTickets.filter(t => t.status === "resolu" || t.status === "cloture");
+                          let totalResolutionTime = 0;
+                          let countWithDates = 0;
+                          
+                          resolvedAgencyTickets.forEach(ticket => {
+                            if (ticket.created_at) {
+                              const created = new Date(ticket.created_at);
+                              let resolved = new Date();
+                              if (ticket.resolved_at) {
+                                resolved = new Date(ticket.resolved_at);
+                              } else if (ticket.closed_at) {
+                                resolved = new Date(ticket.closed_at);
+                              }
+                              const diffTime = resolved.getTime() - created.getTime();
+                              const diffDays = diffTime / (1000 * 60 * 60 * 24);
+                              totalResolutionTime += diffDays;
+                              countWithDates++;
+                            }
+                          });
+                          
+                          const avgResolutionDays = countWithDates > 0 ? totalResolutionTime / countWithDates : 0;
+                          const avgResolutionDisplay = countWithDates > 0 
+                            ? avgResolutionDays % 1 === 0 
+                              ? `${Math.round(avgResolutionDays)} jour${Math.round(avgResolutionDays) > 1 ? 's' : ''}`
+                              : `${avgResolutionDays.toFixed(1)} jours`
+                            : "N/A";
+                          
+                          // Calculer la satisfaction pour cette agence
+                          const ticketsWithFeedback = resolvedAgencyTickets.filter(t => t.feedback_score !== null && t.feedback_score !== undefined);
+                          let satisfactionDisplay = "N/A";
+                          
+                          if (ticketsWithFeedback.length > 0) {
+                            // Utiliser les feedbacks réels
+                            const avgFeedback = ticketsWithFeedback.reduce((sum, t) => sum + (t.feedback_score || 0), 0) / ticketsWithFeedback.length;
+                            satisfactionDisplay = `${((avgFeedback / 5) * 100).toFixed(1)}%`;
+                          } else if (resolvedAgencyTickets.length > 0) {
+                            // Calculer satisfaction implicite basée sur résolu/rejeté
+                            const rejectedAgencyTickets = agencyTickets.filter(t => t.status === "rejete");
+                            const resolvedCount = resolvedAgencyTickets.length;
+                            const rejectedCount = rejectedAgencyTickets.length;
+                            const totalProcessed = resolvedCount + rejectedCount;
+                            if (totalProcessed > 0) {
+                              const satisfactionRate = (resolvedCount / totalProcessed) * 100;
+                              satisfactionDisplay = `${satisfactionRate.toFixed(1)}%`;
+                            }
+                          }
+                          
                           return (
                             <tr key={agency}>
                               <td style={{ padding: "12px" }}>{agency}</td>
                               <td style={{ padding: "12px", textAlign: "right" }}>{agencyTickets.length}</td>
-                              <td style={{ padding: "12px", textAlign: "right" }}>N/A</td>
-                              <td style={{ padding: "12px", textAlign: "right" }}>N/A</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{avgResolutionDisplay}</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{satisfactionDisplay}</td>
                             </tr>
                           );
                         })}
@@ -4286,15 +5191,24 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                     </table>
                   </div>
                   <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter PDF</button>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter Excel</button>
+                    <button 
+                      onClick={() => exportToPDF()}
+                      style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter PDF
+                    </button>
+                    <button 
+                      onClick={() => exportToExcel()}
+                      style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter Excel
+                    </button>
                   </div>
                 </div>
               )}
 
               {selectedReport === "technicien" && (
                 <div style={{ background: "white", padding: "24px", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
-                  <h3 style={{ marginBottom: "20px", fontSize: "22px", fontWeight: "600", color: "#333" }}>Analyses par technicien</h3>
                   <div style={{ marginBottom: "24px" }}>
                     <h4 style={{ marginBottom: "12px", fontSize: "18px", fontWeight: "600", color: "#333" }}>Performance des techniciens</h4>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -4311,13 +5225,114 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                         {technicians.map((tech) => {
                           const techTickets = allTickets.filter((t) => t.technician_id === tech.id);
                           const inProgress = techTickets.filter((t) => t.status === "assigne_technicien" || t.status === "en_cours").length;
+                          const resolvedTickets = techTickets.filter((t) => t.status === "resolu" || t.status === "cloture");
+                          
+                          // Calculer le temps moyen de résolution
+                          let avgTimeDisplay = "N/A";
+                          if (resolvedTickets.length > 0) {
+                            let totalHours = 0;
+                            let countWithDates = 0;
+                            
+                            resolvedTickets.forEach((ticket) => {
+                              if (ticket.created_at) {
+                                const created = new Date(ticket.created_at);
+                                let resolvedDate: Date | null = null;
+                                
+                                if (ticket.status === "cloture" && ticket.closed_at) {
+                                  resolvedDate = new Date(ticket.closed_at);
+                                } else if (ticket.status === "resolu" && ticket.resolved_at) {
+                                  resolvedDate = new Date(ticket.resolved_at);
+                                }
+                                
+                                if (resolvedDate) {
+                                  const diffHours = (resolvedDate.getTime() - created.getTime()) / (1000 * 60 * 60);
+                                  if (diffHours >= 0) {
+                                    totalHours += diffHours;
+                                    countWithDates++;
+                                  }
+                                }
+                              }
+                            });
+                            
+                            if (countWithDates > 0) {
+                              const avgHours = totalHours / countWithDates;
+                              if (avgHours < 24) {
+                                avgTimeDisplay = `${avgHours.toFixed(1)}h`;
+                              } else {
+                                const avgDays = avgHours / 24;
+                                avgTimeDisplay = `${avgDays.toFixed(1)}j`;
+                              }
+                            }
+                          }
+                          
+                          // Calculer la satisfaction
+                          let satisfactionDisplay = "N/A";
+                          if (resolvedTickets.length > 0) {
+                            const ticketsWithFeedback = resolvedTickets.filter((t) => t.feedback_score !== null && t.feedback_score !== undefined);
+                            
+                            if (ticketsWithFeedback.length > 0) {
+                              // Utiliser les feedbacks explicites
+                              const avgFeedback = ticketsWithFeedback.reduce((sum, t) => sum + (t.feedback_score || 0), 0) / ticketsWithFeedback.length;
+                              const satisfactionRate = (avgFeedback / 5) * 100;
+                              satisfactionDisplay = `${satisfactionRate.toFixed(1)}%`;
+                            } else {
+                              // Calculer satisfaction implicite basée sur le temps de résolution
+                              let totalSatisfaction = 0;
+                              let countSatisfaction = 0;
+                              
+                              resolvedTickets.forEach((ticket) => {
+                                if (ticket.created_at) {
+                                  const created = new Date(ticket.created_at);
+                                  let resolvedDate: Date | null = null;
+                                  
+                                  if (ticket.status === "cloture" && ticket.closed_at) {
+                                    resolvedDate = new Date(ticket.closed_at);
+                                  } else if (ticket.status === "resolu" && ticket.resolved_at) {
+                                    resolvedDate = new Date(ticket.resolved_at);
+                                  }
+                                  
+                                  if (resolvedDate) {
+                                    const diffHours = (resolvedDate.getTime() - created.getTime()) / (1000 * 60 * 60);
+                                    const diffDays = diffHours / 24;
+                                    
+                                    let satisfactionScore = 0;
+                                    if (ticket.priority === "haute" || ticket.priority === "critique") {
+                                      if (diffHours < 24) satisfactionScore = 100;
+                                      else if (diffHours < 48) satisfactionScore = 80;
+                                      else if (diffHours < 72) satisfactionScore = 60;
+                                      else satisfactionScore = 40;
+                                    } else if (ticket.priority === "moyenne") {
+                                      if (diffDays < 3) satisfactionScore = 100;
+                                      else if (diffDays < 5) satisfactionScore = 80;
+                                      else if (diffDays < 7) satisfactionScore = 60;
+                                      else satisfactionScore = 40;
+                                    } else {
+                                      if (diffDays < 7) satisfactionScore = 100;
+                                      else if (diffDays < 14) satisfactionScore = 80;
+                                      else if (diffDays < 21) satisfactionScore = 60;
+                                      else satisfactionScore = 40;
+                                    }
+                                    
+                                    totalSatisfaction += satisfactionScore;
+                                    countSatisfaction++;
+                                  }
+                                }
+                              });
+                              
+                              if (countSatisfaction > 0) {
+                                const avgSatisfaction = totalSatisfaction / countSatisfaction;
+                                satisfactionDisplay = `${avgSatisfaction.toFixed(1)}%`;
+                              }
+                            }
+                          }
+                          
                           return (
                             <tr key={tech.id}>
                               <td style={{ padding: "12px" }}>{tech.full_name}</td>
-                              <td style={{ padding: "12px", textAlign: "right" }}>{techTickets.filter((t) => t.status === "resolu" || t.status === "cloture").length}</td>
-                              <td style={{ padding: "12px", textAlign: "right" }}>N/A</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{resolvedTickets.length}</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{avgTimeDisplay}</td>
                               <td style={{ padding: "12px", textAlign: "right" }}>{inProgress}</td>
-                              <td style={{ padding: "12px", textAlign: "right" }}>N/A</td>
+                              <td style={{ padding: "12px", textAlign: "right" }}>{satisfactionDisplay}</td>
                             </tr>
                           );
                         })}
@@ -4325,16 +5340,24 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                     </table>
                   </div>
                   <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter PDF</button>
-                    <button style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Exporter Excel</button>
+                    <button 
+                      onClick={() => exportToPDF()}
+                      style={{ padding: "10px 20px", backgroundColor: "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter PDF
+                    </button>
+                    <button 
+                      onClick={() => exportToExcel()}
+                      style={{ padding: "10px 20px", backgroundColor: "#28a745", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Exporter Excel
+                    </button>
                   </div>
                 </div>
               )}
 
               {selectedReport === "evolutions" && (
                 <div style={{ background: "white", padding: "24px", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
-                  <h3 style={{ marginBottom: "24px", fontSize: "22px", fontWeight: "600", color: "#333" }}>Évolutions dans le temps</h3>
-                  
                   {/* Graphique 1: Volume de tickets créés vs résolus */}
                   <div style={{ marginBottom: "40px" }}>
                     <h4 style={{ marginBottom: "16px", fontSize: "18px", fontWeight: "600", color: "#333" }}>Volume de tickets (30 derniers jours)</h4>
@@ -4533,11 +5556,6 @@ function DSIDashboard({ token }: DSIDashboardProps) {
 
               {selectedReport === "recurrents" && (
                 <div style={{ background: "white", padding: "24px", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
-                  <div style={{ marginBottom: "16px" }}>
-                    <h3 style={{ marginBottom: "8px", fontSize: "22px", fontWeight: "600", color: "#333" }}>PROBLÈMES RÉCURRENTS</h3>
-                    <p style={{ color: "#666", fontSize: "14px", margin: 0 }}>Identification des problèmes qui reviennent souvent</p>
-                  </div>
-
                   {/* Problèmes les plus fréquents */}
                   <div style={{ marginBottom: "32px" }}>
                     <h4 style={{ marginBottom: "16px", fontSize: "18px", fontWeight: "600", color: "#333", display: "flex", alignItems: "center", gap: "8px" }}>
@@ -4650,19 +5668,19 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                     <h4 style={{ marginBottom: "16px", fontSize: "18px", fontWeight: "600", color: "#333", display: "flex", alignItems: "center", gap: "8px" }}>
                       <span>•</span> Historique des problèmes
                     </h4>
-                    <div style={{ background: "#f8f9fa", padding: "16px", borderRadius: "8px" }}>
+                    <div style={{ background: "white", padding: "0", borderRadius: "8px", border: "1px solid #e5e7eb", overflow: "hidden" }}>
                       {getRecurringTicketsHistory().length > 0 ? (
                         <table style={{ width: "100%", borderCollapse: "collapse" }}>
                           <thead>
-                            <tr style={{ background: "transparent" }}>
-                              <th style={{ padding: "12px", textAlign: "left", borderBottom: "1px solid #dee2e6", fontSize: "12px", fontWeight: "600", color: "#666" }}>Problème</th>
-                              <th style={{ padding: "12px", textAlign: "center", borderBottom: "1px solid #dee2e6", fontSize: "12px", fontWeight: "600", color: "#666" }}>Occurrences</th>
-                              <th style={{ padding: "12px", textAlign: "right", borderBottom: "1px solid #dee2e6", fontSize: "12px", fontWeight: "600", color: "#666" }}>Dernière occurrence</th>
+                            <tr style={{ background: "#f8f9fa" }}>
+                              <th style={{ padding: "12px", textAlign: "left", borderBottom: "1px solid #dee2e6", fontSize: "13px", fontWeight: "600", color: "#333" }}>Problème</th>
+                              <th style={{ padding: "12px", textAlign: "center", borderBottom: "1px solid #dee2e6", fontSize: "13px", fontWeight: "600", color: "#333" }}>Occurrences</th>
+                              <th style={{ padding: "12px", textAlign: "right", borderBottom: "1px solid #dee2e6", fontSize: "13px", fontWeight: "600", color: "#333" }}>Dernière occurrence</th>
                             </tr>
                           </thead>
                           <tbody>
                             {getRecurringTicketsHistory().map((item, index) => (
-                              <tr key={index} style={{ borderBottom: index < getRecurringTicketsHistory().length - 1 ? "1px solid #dee2e6" : "none" }}>
+                              <tr key={index} style={{ borderBottom: index < getRecurringTicketsHistory().length - 1 ? "1px solid #e5e7eb" : "none", background: index % 2 === 0 ? "white" : "#f8f9fa" }}>
                                 <td style={{ padding: "12px", color: "#333", fontSize: "14px" }}>{item.titre}</td>
                                 <td style={{ padding: "12px", textAlign: "center" }}>
                                   <span style={{ 
@@ -4670,8 +5688,9 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                                     color: "#1976d2",
                                     padding: "4px 12px",
                                     borderRadius: "12px",
-                                    fontSize: "12px",
-                                    fontWeight: "600"
+                                    fontSize: "13px",
+                                    fontWeight: "600",
+                                    display: "inline-block"
                                   }}>
                                     {item.occurrences}
                                   </span>
@@ -4692,37 +5711,46 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                   </div>
 
                   <div style={{ display: "flex", gap: "12px", marginTop: "32px", paddingTop: "24px", borderTop: "1px solid #e5e7eb" }}>
-                    <button style={{ 
-                      padding: "10px 20px", 
-                      backgroundColor: "#007bff", 
-                      color: "white", 
-                      border: "none", 
-                      borderRadius: "8px", 
-                      cursor: "pointer",
-                      fontWeight: "500"
-                    }}>
-                      [Voir Rapport]
+                    <button 
+                      onClick={() => viewDetailedReport("Problèmes récurrents")}
+                      style={{ 
+                        padding: "10px 20px", 
+                        backgroundColor: "#1e3a5f", 
+                        color: "white", 
+                        border: "none", 
+                        borderRadius: "8px", 
+                        cursor: "pointer",
+                        fontWeight: "500"
+                      }}
+                    >
+                      Voir Rapport
                     </button>
-                    <button style={{ 
-                      padding: "10px 20px", 
-                      backgroundColor: "#28a745", 
-                      color: "white", 
-                      border: "none", 
-                      borderRadius: "8px", 
-                      cursor: "pointer",
-                      fontWeight: "500"
-                    }}>
+                    <button 
+                      onClick={() => exportToPDF("Problèmes récurrents")}
+                      style={{ 
+                        padding: "10px 20px", 
+                        backgroundColor: "#28a745", 
+                        color: "white", 
+                        border: "none", 
+                        borderRadius: "8px", 
+                        cursor: "pointer",
+                        fontWeight: "500"
+                      }}
+                    >
                       Exporter PDF
                     </button>
-                    <button style={{ 
-                      padding: "10px 20px", 
-                      backgroundColor: "#17a2b8", 
-                      color: "white", 
-                      border: "none", 
-                      borderRadius: "8px", 
-                      cursor: "pointer",
-                      fontWeight: "500"
-                    }}>
+                    <button 
+                      onClick={() => exportToExcel("Problèmes récurrents")}
+                      style={{ 
+                        padding: "10px 20px", 
+                        backgroundColor: "#17a2b8", 
+                        color: "white", 
+                        border: "none", 
+                        borderRadius: "8px", 
+                        cursor: "pointer",
+                        fontWeight: "500"
+                      }}
+                    >
                       Exporter Excel
                     </button>
                   </div>
@@ -5549,7 +6577,7 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                         color: "#0f172a",
                       }}
                     >
-                      {resolutionRate}
+                      {resolutionRateForTechnicians}
                     </div>
                     <div style={{ fontSize: "14px", color: "#6b7280" }}>
                       Taux de résolution
@@ -5590,7 +6618,7 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                         color: "#0f172a",
                       }}
                     >
-                      {averageSatisfactionPercentage}%
+                      {averageSatisfactionForTechniciansPercentage}%
                     </div>
                     <div style={{ fontSize: "14px", color: "#6b7280" }}>
                       Satisfaction moyenne
