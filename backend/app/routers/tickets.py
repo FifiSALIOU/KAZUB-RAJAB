@@ -324,6 +324,7 @@ def delete_ticket(
 def assign_ticket(
     ticket_id: UUID,
     assign_data: schemas.TicketAssign,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(
         require_role("Secrétaire DSI", "Adjoint DSI", "DSI", "Admin")
@@ -389,35 +390,32 @@ def assign_ticket(
     db.commit()
     db.refresh(ticket)
     
-    # Envoyer un email de notification au technicien
-    try:
-        if technician.email and technician.email.strip():
-            email_service.send_ticket_assigned_notification(
-                ticket_id=str(ticket.id),
-                ticket_number=ticket.number,
-                ticket_title=ticket.title,
-                technician_email=technician.email,
-                technician_name=technician.full_name,
-                priority=ticket.priority,
-                notes=assign_data.notes
-            )
-    except Exception as e:
-        print(f"[EMAIL] Erreur envoi email technicien: {e}")
+    # Récupérer le créateur du ticket pour l'email
+    creator = db.query(models.User).filter(models.User.id == ticket.creator_id).first()
     
-    # Envoyer un email de notification au créateur du ticket
-    try:
-        creator = db.query(models.User).filter(models.User.id == ticket.creator_id).first()
-        if creator and creator.email and creator.email.strip():
-            email_service.send_ticket_assigned_to_creator_notification(
-                ticket_id=str(ticket.id),
-                ticket_number=ticket.number,
-                ticket_title=ticket.title,
-                creator_email=creator.email,
-                creator_name=creator.full_name,
-                technician_name=technician.full_name
-            )
-    except Exception as e:
-        print(f"[EMAIL] Erreur envoi email créateur: {e}")
+    # Envoyer les emails en arrière-plan (asynchrone)
+    if technician.email and technician.email.strip():
+        background_tasks.add_task(
+            email_service.send_ticket_assigned_notification,
+            ticket_id=str(ticket.id),
+            ticket_number=ticket.number,
+            ticket_title=ticket.title,
+            technician_email=technician.email,
+            technician_name=technician.full_name,
+            priority=ticket.priority,
+            notes=assign_data.notes
+        )
+    
+    if creator and creator.email and creator.email.strip():
+        background_tasks.add_task(
+            email_service.send_ticket_assigned_to_creator_notification,
+            ticket_id=str(ticket.id),
+            ticket_number=ticket.number,
+            ticket_title=ticket.title,
+            creator_email=creator.email,
+            creator_name=creator.full_name,
+            technician_name=technician.full_name
+        )
     
     # Charger les relations pour la réponse
     ticket = (
@@ -437,6 +435,7 @@ def assign_ticket(
 def reassign_ticket(
     ticket_id: UUID,
     assign_data: schemas.TicketAssign,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(
         require_role("Secrétaire DSI", "Adjoint DSI", "DSI", "Admin")
@@ -526,9 +525,10 @@ def reassign_ticket(
     db.commit()
     db.refresh(ticket)
     
-    # Envoyer un email de notification au nouveau technicien
+    # Envoyer un email de notification au nouveau technicien en arrière-plan (asynchrone)
     if technician.email and technician.email.strip():
-        email_service.send_ticket_assigned_notification(
+        background_tasks.add_task(
+            email_service.send_ticket_assigned_notification,
             ticket_id=str(ticket.id),
             ticket_number=ticket.number,
             ticket_title=ticket.title,
@@ -920,6 +920,7 @@ def validate_ticket_resolution(
 def delegate_to_adjoint(
     ticket_id: UUID,
     delegate_data: schemas.TicketDelegate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_role("DSI")),
 ):
@@ -958,6 +959,20 @@ def delegate_to_adjoint(
     )
     db.add(notification)
     db.commit()
+    
+    # Envoyer un email à l'adjoint DSI en arrière-plan
+    if adjoint.email and adjoint.email.strip():
+        background_tasks.add_task(
+            email_service.send_ticket_delegated_to_adjoint_notification,
+            ticket_id=str(ticket.id),
+            ticket_number=ticket.number,
+            ticket_title=ticket.title,
+            adjoint_email=adjoint.email,
+            adjoint_name=adjoint.full_name,
+            dsi_name=current_user.full_name,
+            notes=delegate_data.notes
+        )
+    
     db.refresh(ticket)
     ticket = (
         db.query(models.Ticket)

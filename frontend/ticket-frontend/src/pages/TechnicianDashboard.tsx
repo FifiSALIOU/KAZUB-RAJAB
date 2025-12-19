@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { PanelLeft, ClipboardList, Clock3, CheckCircle2 } from "lucide-react";
 
 interface Notification {
@@ -48,6 +49,7 @@ interface TicketHistory {
 }
 
 function TechnicianDashboard({ token }: TechnicianDashboardProps) {
+  const [searchParams] = useSearchParams();
   const [allTickets, setAllTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState<string | null>(null);
@@ -249,6 +251,50 @@ function TechnicianDashboard({ token }: TechnicianDashboardProps) {
     
     return () => clearInterval(interval);
   }, [token]);
+
+  // Gérer les paramètres URL pour ouvrir automatiquement le ticket
+  useEffect(() => {
+    const ticketId = searchParams.get("ticket");
+    
+    if (ticketId && allTickets.length > 0) {
+      // Vérifier que le ticket existe et est assigné au technicien
+      const ticket = allTickets.find(t => t.id === ticketId);
+      if (ticket) {
+        // Charger et ouvrir automatiquement les détails du ticket
+        async function openTicket() {
+          try {
+            const res = await fetch(`http://localhost:8000/tickets/${ticketId}`, {
+              headers: {
+                Authorization: `Bearer ${token}`,
+              },
+            });
+            if (res.ok) {
+              const data = await res.json();
+              setTicketDetails(data);
+              // Charger l'historique
+              try {
+                const historyRes = await fetch(`http://localhost:8000/tickets/${ticketId}/history`, {
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                  },
+                });
+                if (historyRes.ok) {
+                  const historyData = await historyRes.json();
+                  setTicketHistory(Array.isArray(historyData) ? historyData : []);
+                }
+              } catch {}
+              setViewTicketDetails(ticketId);
+              // Nettoyer l'URL après avoir ouvert le ticket
+              window.history.replaceState({}, "", window.location.pathname);
+            }
+          } catch (err) {
+            console.error("Erreur chargement détails:", err);
+          }
+        }
+        void openTicket();
+      }
+    }
+  }, [searchParams, allTickets, token]);
 
   async function loadTicketDetails(ticketId: string) {
     try {

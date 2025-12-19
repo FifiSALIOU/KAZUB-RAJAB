@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { PanelLeft, Clock3, Users, CheckCircle2, FileBarChart, ChevronRight, ChevronDown } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -24,7 +25,11 @@ interface Ticket {
   status: string;
   type: string;  // "materiel" ou "applicatif"
   technician_id: string | null;
+  secretary_id?: string | null;  // ID de l'adjoint DSI auquel le ticket est délégué
   created_at?: string;
+  resolved_at?: string | null;
+  closed_at?: string | null;
+  feedback_score?: number | null;
 }
 
 interface Technician {
@@ -56,12 +61,14 @@ interface TicketHistory {
 }
 
 interface UserRead {
+  id?: string;  // ID de l'utilisateur connecté
   full_name: string;
   email: string;
   agency?: string | null;
 }
 
 function SecretaryDashboard({ token }: SecretaryDashboardProps) {
+  const [searchParams] = useSearchParams();
   const [allTickets, setAllTickets] = useState<Ticket[]>([]);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<string | null>(null);
@@ -74,6 +81,8 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
   const [ticketDetails, setTicketDetails] = useState<Ticket | null>(null);
   const [ticketHistory, setTicketHistory] = useState<TicketHistory[]>([]);
   const [showReopenModal, setShowReopenModal] = useState<boolean>(false);
+  const [showAssignModal, setShowAssignModal] = useState<boolean>(false);
+  const [assignModalTicketId, setAssignModalTicketId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [roleName, setRoleName] = useState<string>("");
   const [activeSection, setActiveSection] = useState<string>("dashboard");
@@ -227,19 +236,32 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
     window.location.href = "/";
   }
 
+  // Fonction pour charger les tickets (séparée pour pouvoir être appelée périodiquement)
+  async function loadTickets() {
+    if (!token || token.trim() === "") {
+      return;
+    }
+    
+    try {
+      const ticketsRes = await fetch("http://localhost:8000/tickets/", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (ticketsRes.ok) {
+        const ticketsData = await ticketsRes.json();
+        setAllTickets(ticketsData);
+      }
+    } catch (err) {
+      console.error("Erreur lors du chargement des tickets:", err);
+    }
+  }
+
   useEffect(() => {
     async function loadData() {
       try {
         // Charger tous les tickets
-        const ticketsRes = await fetch("http://localhost:8000/tickets/", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        if (ticketsRes.ok) {
-          const ticketsData = await ticketsRes.json();
-          setAllTickets(ticketsData);
-        }
+        await loadTickets();
 
         // Charger la liste des techniciens
         const techRes = await fetch("http://localhost:8000/users/technicians", {
@@ -264,6 +286,7 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
             setRoleName(meData.role.name);
           }
           setUserInfo({
+            id: meData.id,
             full_name: meData.full_name,
             email: meData.email,
             agency: meData.agency
@@ -279,14 +302,35 @@ function SecretaryDashboard({ token }: SecretaryDashboardProps) {
     }
     void loadData();
 
-    // Recharger les notifications toutes les 30 secondes
+    // Recharger automatiquement les tickets et notifications toutes les 30 secondes
+    // Cela permet aux métriques de se mettre à jour automatiquement avec les données réelles
     const interval = setInterval(() => {
+      void loadTickets(); // Rafraîchir les tickets pour mettre à jour les métriques automatiquement
       void loadNotifications();
       void loadUnreadCount();
     }, 30000);
     
     return () => clearInterval(interval);
   }, [token]);
+
+  // Gérer les paramètres URL pour ouvrir automatiquement les modals
+  useEffect(() => {
+    const ticketId = searchParams.get("ticket");
+    const action = searchParams.get("action");
+    
+    if (ticketId && allTickets.length > 0) {
+      // Vérifier que le ticket existe
+      const ticket = allTickets.find(t => t.id === ticketId);
+      if (ticket) {
+        if (action === "assign") {
+          setAssignModalTicketId(ticketId);
+          setShowAssignModal(true);
+          // Nettoyer l'URL après avoir ouvert le modal
+          window.history.replaceState({}, "", window.location.pathname);
+        }
+      }
+    }
+  }, [searchParams, allTickets]);
 
   // Charger les rapports récents quand userInfo est disponible
   useEffect(() => {
@@ -979,6 +1023,8 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
         setSelectedTicket(null);
         setSelectedTechnician("");
         setAssignmentNotes("");
+        setShowAssignModal(false);
+        setAssignModalTicketId(null);
         alert("Ticket assigné avec succès");
       } else {
         let errorMessage = "Impossible d'assigner le ticket";
@@ -2051,10 +2097,29 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
               </td>
             </tr>
           ) : (
-            recentTickets.map((t) => (
-              <tr key={t.id} style={{ borderBottom: "1px solid #eee" }}>
+            recentTickets.map((t) => {
+              const isDelegatedToMe = roleName === "Adjoint DSI" && t.secretary_id === userInfo?.id;
+              return (
+              <tr key={t.id} data-ticket-id={t.id} style={{ borderBottom: "1px solid #eee", background: isDelegatedToMe ? "#fff3cd" : "transparent" }}>
                 <td style={{ padding: "12px 16px" }}>#{t.number}</td>
-                <td style={{ padding: "12px 16px" }}>{t.title}</td>
+                <td style={{ padding: "12px 16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    {t.title}
+                    {isDelegatedToMe && (
+                      <span style={{
+                        padding: "2px 6px",
+                        borderRadius: "4px",
+                        fontSize: "10px",
+                        fontWeight: "600",
+                        background: "#ffc107",
+                        color: "#856404",
+                        whiteSpace: "nowrap"
+                      }}>
+                        Délégué
+                      </span>
+                    )}
+                  </div>
+                </td>
                 <td style={{ padding: "12px 16px" }}>
                   {t.creator ? t.creator.full_name : "N/A"}
                 </td>
@@ -2109,7 +2174,10 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                         >
                           <option value="">Sélectionner un technicien</option>
                           {getFilteredTechnicians(t.type).map((tech) => {
-                            const workload = allTickets.filter((tk) => tk.technician_id === tech.id && (tk.status === "assigne_technicien" || tk.status === "en_cours")).length;
+                            const workload = allTickets.filter((tk) => 
+                              tk.technician_id === tech.id && 
+                              (tk.status === "assigne_technicien" || tk.status === "en_cours")
+                            ).length;
                             const specialization = tech.specialization ? ` (${tech.specialization})` : "";
                             return (
                               <option key={tech.id} value={tech.id}>
@@ -2267,7 +2335,15 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                               <>
                                 <div style={{ borderTop: "1px solid #e5e7eb" }}></div>
                                 <button
-                                  onClick={() => { setSelectedTicket(t.id); setOpenActionsMenuFor(null); }}
+                                  onClick={() => { 
+                                    if (roleName === "Adjoint DSI") {
+                                      setAssignModalTicketId(t.id);
+                                      setShowAssignModal(true);
+                                    } else {
+                                      setSelectedTicket(t.id);
+                                    }
+                                    setOpenActionsMenuFor(null);
+                                  }}
                                   disabled={loading}
                                   style={{ 
                                     width: "100%", 
@@ -2342,7 +2418,10 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                         >
                           <option value="">Sélectionner un technicien</option>
                           {getFilteredTechnicians(t.type).map((tech) => {
-                            const workload = allTickets.filter((tk) => tk.technician_id === tech.id && (tk.status === "assigne_technicien" || tk.status === "en_cours")).length;
+                            const workload = allTickets.filter((tk) => 
+                              tk.technician_id === tech.id && 
+                              (tk.status === "assigne_technicien" || tk.status === "en_cours")
+                            ).length;
                             const specialization = tech.specialization ? ` (${tech.specialization})` : "";
                             return (
                               <option key={tech.id} value={tech.id}>
@@ -2921,7 +3000,8 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                   )}
                 </td>
               </tr>
-            ))
+              );
+            })
           )}
               </tbody>
               </table>
@@ -3027,10 +3107,29 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                       </td>
                     </tr>
                   ) : (
-                    filteredTickets.map((t) => (
-                      <tr key={t.id} style={{ borderBottom: "1px solid #eee" }}>
+                    filteredTickets.map((t) => {
+                      const isDelegatedToMe = roleName === "Adjoint DSI" && t.secretary_id === userInfo?.id;
+                      return (
+                      <tr key={t.id} data-ticket-id={t.id} style={{ borderBottom: "1px solid #eee", background: isDelegatedToMe ? "#fff3cd" : "transparent" }}>
                         <td style={{ padding: "12px 16px" }}>#{t.number}</td>
-                        <td style={{ padding: "12px 16px" }}>{t.title}</td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            {t.title}
+                            {isDelegatedToMe && (
+                              <span style={{
+                                padding: "2px 6px",
+                                borderRadius: "4px",
+                                fontSize: "10px",
+                                fontWeight: "600",
+                                background: "#ffc107",
+                                color: "#856404",
+                                whiteSpace: "nowrap"
+                              }}>
+                                Délégué
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td style={{ padding: "12px 16px" }}>
                           {t.creator ? t.creator.full_name : "N/A"}
                         </td>
@@ -3084,7 +3183,10 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                                 >
                                   <option value="">Sélectionner un technicien</option>
                                   {getFilteredTechnicians(t.type).map((tech) => {
-                                    const workload = allTickets.filter((tk) => tk.technician_id === tech.id && (tk.status === "assigne_technicien" || tk.status === "en_cours")).length;
+                                    const workload = allTickets.filter((tk) => 
+                              tk.technician_id === tech.id && 
+                              (tk.status === "assigne_technicien" || tk.status === "en_cours")
+                            ).length;
                                     const specialization = tech.specialization ? ` (${tech.specialization})` : "";
                                     return (
                                       <option key={tech.id} value={tech.id}>
@@ -3262,7 +3364,15 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                                     <>
                                       <div style={{ borderTop: "1px solid #e5e7eb" }}></div>
                                       <button
-                                        onClick={() => { setSelectedTicket(t.id); setOpenActionsMenuFor(null); }}
+                                        onClick={() => { 
+                                          if (roleName === "Adjoint DSI") {
+                                            setAssignModalTicketId(t.id);
+                                            setShowAssignModal(true);
+                                          } else {
+                                            setSelectedTicket(t.id);
+                                          }
+                                          setOpenActionsMenuFor(null);
+                                        }}
                                         disabled={loading}
                                         style={{ 
                                           width: "100%", 
@@ -3336,7 +3446,10 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                                 >
                                   <option value="">Sélectionner un technicien</option>
                                   {getFilteredTechnicians(t.type).map((tech) => {
-                                    const workload = allTickets.filter((tk) => tk.technician_id === tech.id && (tk.status === "assigne_technicien" || tk.status === "en_cours")).length;
+                                    const workload = allTickets.filter((tk) => 
+                              tk.technician_id === tech.id && 
+                              (tk.status === "assigne_technicien" || tk.status === "en_cours")
+                            ).length;
                                     const specialization = tech.specialization ? ` (${tech.specialization})` : "";
                                     return (
                                       <option key={tech.id} value={tech.id}>
@@ -3891,7 +4004,8 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                           )}
                         </td>
                       </tr>
-                    ))
+                      );
+                    })
                   )}
                 </tbody>
       </table>
@@ -4766,7 +4880,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
               )}
 
               {selectedReport === "metriques" && (() => {
-                // Calculer les métriques
+                // Calculer les métriques avec des données RÉELLES
                 const resolvedTickets = allTickets.filter((t) => t.status === "resolu" || t.status === "cloture");
                 const rejectedTickets = allTickets.filter((t) => t.status === "rejete");
                 const escalatedTickets = allTickets.filter((t) => t.priority === "critique" && (t.status === "en_attente_analyse" || t.status === "assigne_technicien" || t.status === "en_cours"));
@@ -4775,14 +4889,48 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                   return true; // Pour l'instant, on compte tous les rejetés comme potentiellement rouverts
                 });
                 
-                // Calculer le temps moyen de résolution (simplifié - en jours)
-                const avgResolutionDays = resolvedTickets.length > 0 ? Math.round(resolvedTickets.length / 2) : 0;
+                // Calculer le temps moyen de résolution RÉEL basé sur les dates
+                let totalResolutionTime = 0;
+                let resolvedCountWithDates = 0;
+                resolvedTickets.forEach((ticket) => {
+                  if (ticket.created_at) {
+                    let resolvedDate: Date | null = null;
+                    if (ticket.status === "cloture" && ticket.closed_at) {
+                      resolvedDate = new Date(ticket.closed_at);
+                    } else if (ticket.status === "resolu" && ticket.resolved_at) {
+                      resolvedDate = new Date(ticket.resolved_at);
+                    }
+                    
+                    if (resolvedDate) {
+                      const created = new Date(ticket.created_at);
+                      const diffDays = Math.floor((resolvedDate.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+                      if (diffDays >= 0) {
+                        totalResolutionTime += diffDays;
+                        resolvedCountWithDates++;
+                      }
+                    }
+                  }
+                });
+                const avgResolutionDays = resolvedCountWithDates > 0 ? Math.round(totalResolutionTime / resolvedCountWithDates) : 0;
                 
-                // Calculer le taux de satisfaction implicite (sans avis utilisateur)
-                const resolvedCount = resolvedTickets.length;
-                const rejectedCount = rejectedTickets.length;
-                const baseDenominator = resolvedCount + rejectedCount;
-                const satisfactionRate = baseDenominator > 0 ? ((resolvedCount / baseDenominator) * 100).toFixed(1) : "0";
+                // Calculer le taux de satisfaction RÉEL basé sur les feedback_score
+                const ticketsWithFeedback = resolvedTickets.filter((t) => t.feedback_score !== null && t.feedback_score !== undefined && t.feedback_score > 0);
+                let satisfactionRate = "0";
+                if (ticketsWithFeedback.length > 0) {
+                  const avgFeedback = ticketsWithFeedback.reduce((sum, t) => sum + (t.feedback_score || 0), 0) / ticketsWithFeedback.length;
+                  satisfactionRate = ((avgFeedback / 5) * 100).toFixed(1);
+                } else if (resolvedTickets.length > 0) {
+                  // Si pas de feedback, utiliser le taux de résolution comme indicateur
+                  const resolvedCount = resolvedTickets.length;
+                  const rejectedCount = rejectedTickets.length;
+                  const baseDenominator = resolvedCount + rejectedCount;
+                  satisfactionRate = baseDenominator > 0 ? ((resolvedCount / baseDenominator) * 100).toFixed(1) : "0";
+                }
+                
+                // Calculer le taux de résolution RÉEL
+                const totalTicketsCount = allTickets.length;
+                const resolvedOrClosedCount = resolvedTickets.length;
+                const resolutionRate = totalTicketsCount > 0 ? `${Math.round((resolvedOrClosedCount / totalTicketsCount) * 100)}%` : "0%";
                 
                 // Taux de réouverture
                 const reopenRate = rejectedTickets.length > 0 ? ((reopenedTickets.length / rejectedTickets.length) * 100).toFixed(1) : "0";
@@ -4798,6 +4946,10 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                       <div style={{ padding: "16px", background: "#f8f9fa", borderRadius: "8px" }}>
                         <div style={{ fontSize: "32px", fontWeight: "bold", color: "#4caf50", marginBottom: "8px" }}>{satisfactionRate}%</div>
                         <div style={{ color: "#666" }}>Taux de satisfaction utilisateur</div>
+                      </div>
+                      <div style={{ padding: "16px", background: "#f8f9fa", borderRadius: "8px" }}>
+                        <div style={{ fontSize: "32px", fontWeight: "bold", color: "#2196f3", marginBottom: "8px" }}>{resolutionRate}</div>
+                        <div style={{ color: "#666" }}>Taux de résolution</div>
                       </div>
                       <div style={{ padding: "16px", background: "#f8f9fa", borderRadius: "8px" }}>
                         <div style={{ fontSize: "32px", fontWeight: "bold", color: "#dc3545", marginBottom: "8px" }}>{escalatedTickets.length}</div>
@@ -5591,11 +5743,14 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                   Aucune notification
                 </div>
               ) : (
-                notifications.map((notif) => (
+                notifications.map((notif) => {
+                  const isDelegatedTicket = roleName === "Adjoint DSI" && notif.ticket_id && notif.message.includes("délégué par DSI");
+                  return (
                   <div
                     key={notif.id}
-                    onClick={() => {
-                      if (!notif.read) {
+                    onClick={(e) => {
+                      // Ne pas marquer comme lu si on clique sur le bouton
+                      if (!notif.read && !(e.target as HTMLElement).closest('button')) {
                         void markNotificationAsRead(notif.id);
                       }
                     }}
@@ -5637,6 +5792,32 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                             minute: "2-digit"
                           })}
                         </p>
+                        {isDelegatedTicket && notif.ticket_id && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (notif.ticket_id) {
+                                setAssignModalTicketId(notif.ticket_id);
+                                setShowAssignModal(true);
+                                setShowNotifications(false);
+                              }
+                            }}
+                            style={{
+                              marginTop: "8px",
+                              padding: "6px 12px",
+                              background: "#0ea5e9",
+                              color: "white",
+                              border: "none",
+                              borderRadius: "4px",
+                              fontSize: "12px",
+                              fontWeight: "600",
+                              cursor: "pointer",
+                              display: "inline-block"
+                            }}
+                          >
+                            Assigner ce ticket
+                          </button>
+                        )}
                       </div>
                       {!notif.read && (
                         <div style={{
@@ -5650,12 +5831,112 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                       )}
                     </div>
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
         </div>
       )}
+
+      {/* Modal d'assignation pour l'adjoint DSI */}
+      {showAssignModal && assignModalTicketId && (() => {
+        const ticket = allTickets.find(t => t.id === assignModalTicketId);
+        return ticket ? (
+          <div style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000
+          }}>
+            <div style={{
+              background: "white",
+              padding: "24px",
+              borderRadius: "8px",
+              maxWidth: "600px",
+              width: "90%",
+              maxHeight: "90vh",
+              overflowY: "auto"
+            }}>
+              <h3 style={{ marginBottom: "16px", color: "#0ea5e9" }}>Assigner le ticket à un technicien</h3>
+              <div style={{ marginBottom: "20px", padding: "12px", background: "#f8f9fa", borderRadius: "4px" }}>
+                <div style={{ marginBottom: "8px" }}>
+                  <strong>Ticket #{ticket.number}:</strong> {ticket.title}
+                </div>
+                <div style={{ fontSize: "14px", color: "#666" }}>
+                  Type: <strong>{ticket.type === "materiel" ? "Matériel" : "Applicatif"}</strong>
+                </div>
+                <div style={{ fontSize: "14px", color: "#666" }}>
+                  Priorité: <strong>{ticket.priority}</strong>
+                </div>
+              </div>
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>
+                  Sélectionner un technicien <span style={{ color: "#dc3545" }}>*</span>
+                </label>
+                <select
+                  value={selectedTechnician}
+                  onChange={(e) => setSelectedTechnician(e.target.value)}
+                  style={{ width: "100%", padding: "8px", border: "1px solid #ddd", borderRadius: "4px", fontSize: "14px" }}
+                >
+                  <option value="">Sélectionner un technicien</option>
+                  {getFilteredTechnicians(ticket.type).map((tech) => {
+                    const workload = allTickets.filter((tk) => 
+                      tk.technician_id === tech.id && 
+                      (tk.status === "assigne_technicien" || tk.status === "en_cours")
+                    ).length;
+                    const specialization = tech.specialization ? ` (${tech.specialization})` : "";
+                    return (
+                      <option key={tech.id} value={tech.id}>
+                        {tech.full_name}{specialization} - {workload} ticket(s)
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ display: "block", marginBottom: "8px", fontWeight: "500", color: "#333" }}>
+                  Notes/Instructions pour le technicien (optionnel)
+                </label>
+                <textarea
+                  value={assignmentNotes}
+                  onChange={(e) => setAssignmentNotes(e.target.value)}
+                  placeholder="Instructions ou contexte pour le technicien..."
+                  rows={3}
+                  style={{ width: "100%", padding: "8px", border: "1px solid #ddd", borderRadius: "4px", fontSize: "14px", resize: "vertical" }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+                <button
+                  onClick={() => {
+                    setShowAssignModal(false);
+                    setAssignModalTicketId(null);
+                    setSelectedTechnician("");
+                    setAssignmentNotes("");
+                  }}
+                  disabled={loading}
+                  style={{ padding: "10px 20px", background: "#6c757d", color: "white", border: "none", borderRadius: "4px", cursor: loading ? "not-allowed" : "pointer", fontSize: "14px", fontWeight: "500" }}
+                >
+                  Annuler
+                </button>
+                <button
+                  onClick={() => assignModalTicketId && handleAssign(assignModalTicketId)}
+                  disabled={loading || !selectedTechnician}
+                  style={{ padding: "10px 20px", background: "#0ea5e9", color: "white", border: "none", borderRadius: "4px", cursor: loading || !selectedTechnician ? "not-allowed" : "pointer", fontSize: "14px", fontWeight: "500", opacity: loading || !selectedTechnician ? 0.6 : 1 }}
+                >
+                  {loading ? "Assignation..." : "Confirmer l'assignation"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null;
+      })()}
 
       {/* Modal de réouverture avec motif de rejet */}
       {showReopenModal && reopenTicketId && (

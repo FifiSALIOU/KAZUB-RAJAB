@@ -73,6 +73,7 @@ function App() {
     <div>
       <Routes>
         <Route path="/" element={<LoginPage onLogin={setToken} />} />
+        <Route path="/login" element={<LoginPage onLogin={setToken} />} />
         <Route path="/dashboard" element={getDashboard()} />
         <Route
           path="/dashboard/user"

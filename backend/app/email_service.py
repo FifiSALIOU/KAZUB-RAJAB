@@ -153,7 +153,7 @@ Cordialement,
     </div>
     <p>Veuillez vous connecter à l'application pour analyser et assigner ce ticket.</p>
     <div style="margin: 20px 0;">
-        <a href="{self.app_base_url}/" style="background:#007bff;color:#fff;text-decoration:none;padding:10px 16px;border-radius:6px;display:inline-block">Ouvrir l’application</a>
+        <a href="{self.app_base_url}/login?redirect=/dashboard" style="background:#007bff;color:#fff;text-decoration:none;padding:10px 16px;border-radius:6px;display:inline-block">Ouvrir l'application</a>
     </div>
     <p>Cordialement,<br>{self.sender_name}</p>
 </body>
@@ -339,7 +339,7 @@ Cordialement,
         html_body += f"""
     </div>
     <div style="margin: 20px 0;">
-        <a href="{action_link}" style="background:#007bff;color:#fff;text-decoration:none;padding:10px 16px;border-radius:6px;display:inline-block">Ouvrir l'application</a>
+        <a href="{action_link}" style="background:#007bff;color:#fff;text-decoration:none;padding:10px 16px;border-radius:6px;display:inline-block">Résoudre le Ticket</a>
     </div>
     <p>Veuillez vous connecter à l'application pour prendre en charge ce ticket.</p>
     <p>Cordialement,<br>{self.sender_name}</p>
@@ -538,6 +538,96 @@ Cordialement,
 """
 
         return self.send_email([technician_email], subject, body, html_body)
+    
+    def send_ticket_delegated_to_adjoint_notification(
+        self,
+        ticket_id: str,
+        ticket_number: int,
+        ticket_title: str,
+        adjoint_email: str,
+        adjoint_name: str,
+        dsi_name: str,
+        notes: Optional[str] = None
+    ) -> bool:
+        """
+        Envoie une notification par email à l'adjoint DSI lorsqu'un ticket lui est délégué par le DSI
+        
+        Args:
+            ticket_id: ID du ticket
+            ticket_number: Numéro du ticket
+            ticket_title: Titre du ticket
+            adjoint_email: Email de l'adjoint DSI
+            adjoint_name: Nom de l'adjoint DSI
+            dsi_name: Nom du DSI qui délègue
+            notes: Notes de délégation (optionnel)
+        
+        Returns:
+            True si l'email a été envoyé avec succès
+        """
+        subject = f"Ticket #{ticket_number} délégué par le DSI: {ticket_title}"
+        
+        body = f"""
+Bonjour {adjoint_name},
+
+Le DSI {dsi_name} vous a délégué un ticket à assigner à un technicien.
+
+Détails du ticket :
+• Numéro : #{ticket_number}
+• Titre : {ticket_title}
+"""
+        
+        if notes:
+            body += f"\nNotes du DSI :\n{notes}\n"
+        
+        body += f"""
+Veuillez vous connecter à l'application pour assigner ce ticket à un technicien.
+
+Cordialement,
+{self.sender_name}
+"""
+        
+        # Lien vers le dashboard avec le ticket et l'action assign
+        redirect_params = urlencode({
+            "redirect": "/dashboard/secretary",
+            "ticket": ticket_id,
+            "action": "assign"
+        })
+        action_link = f"{self.app_base_url}/login?{redirect_params}"
+        
+        html_body = f"""
+<html>
+<body>
+    <h2>Ticket délégué par le DSI</h2>
+    <p>Bonjour {adjoint_name},</p>
+    <p>Le DSI <strong>{dsi_name}</strong> vous a délégué un ticket à assigner à un technicien.</p>
+    <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 15px 0;">
+        <p><strong>Détails du ticket :</strong></p>
+        <ul>
+            <li><strong>Numéro :</strong> #{ticket_number}</li>
+            <li><strong>Titre :</strong> {ticket_title}</li>
+        </ul>
+    </div>
+"""
+        
+        if notes:
+            html_body += f"""
+    <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 3px solid #ffc107;">
+        <p><strong>Notes du DSI :</strong></p>
+        <p>{notes}</p>
+    </div>
+"""
+        
+        html_body += f"""
+    <div style="margin: 20px 0;">
+        <a href="{action_link}" style="background:#0ea5e9;color:#fff;text-decoration:none;padding:10px 16px;border-radius:6px;display:inline-block;font-weight:bold">Assigner ce ticket</a>
+    </div>
+    <p>Veuillez vous connecter à l'application pour assigner ce ticket à un technicien.</p>
+    <p>Cordialement,<br>{self.sender_name}</p>
+</body>
+</html>
+"""
+        
+        return self.send_email([adjoint_email], subject, body, html_body)
 
 
 # Instance globale du service email

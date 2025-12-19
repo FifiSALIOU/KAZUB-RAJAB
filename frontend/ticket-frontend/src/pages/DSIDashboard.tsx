@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { PanelLeft, Users, Clock3, Clock, TrendingUp, Award, UserCheck, Star } from "lucide-react";
 import React from "react";
 import jsPDF from "jspdf";
@@ -102,6 +103,8 @@ interface UserRead {
 }
 
 function DSIDashboard({ token }: DSIDashboardProps) {
+  const [searchParams] = useSearchParams();
+  
   // Fonction pour déterminer le statut de disponibilité basé sur les horaires de travail
   function getAvailabilityStatus(tech: Technician): string {
     // Si pas d'horaires définis, utiliser le statut de la base de données
@@ -228,10 +231,14 @@ function DSIDashboard({ token }: DSIDashboardProps) {
   const [delegateTicketId, setDelegateTicketId] = useState<string | null>(null);
   const [selectedAdjoint, setSelectedAdjoint] = useState<string>("");
   const [loading, setLoading] = useState(false);
-  const [metrics, setMetrics] = useState({
+  const [metrics, setMetrics] = useState<{
+    openTickets: number;
+    avgResolutionTime: string | null;
+    userSatisfaction: string | null;
+  }>({
     openTickets: 0,
-    avgResolutionTime: "0 jours",
-    userSatisfaction: "0%",
+    avgResolutionTime: null,
+    userSatisfaction: null,
   });
   const [techniciansSatisfaction, setTechniciansSatisfaction] = useState<string>("0.0");
   const [activeSection, setActiveSection] = useState<string>("dashboard");
@@ -525,6 +532,30 @@ function DSIDashboard({ token }: DSIDashboardProps) {
       setLocalAppLogo(appLogo);
     }
   }, [activeSection, appName, appTheme, primaryColor, appLogo]);
+  
+  // Gérer les paramètres URL pour ouvrir automatiquement les modals
+  useEffect(() => {
+    const ticketId = searchParams.get("ticket");
+    const action = searchParams.get("action");
+    
+    if (ticketId && allTickets.length > 0) {
+      // Vérifier que le ticket existe
+      const ticket = allTickets.find(t => t.id === ticketId);
+      if (ticket) {
+        if (action === "assign") {
+          setAssignTicketId(ticketId);
+          setShowAssignModal(true);
+          // Nettoyer l'URL après avoir ouvert le modal
+          window.history.replaceState({}, "", window.location.pathname);
+        } else if (action === "delegate") {
+          setDelegateTicketId(ticketId);
+          setShowDelegateModal(true);
+          // Nettoyer l'URL après avoir ouvert le modal
+          window.history.replaceState({}, "", window.location.pathname);
+        }
+      }
+    }
+  }, [searchParams, allTickets]);
   const [newUser, setNewUser] = useState({
     full_name: "",
     email: "",
@@ -1059,25 +1090,38 @@ function DSIDashboard({ token }: DSIDashboardProps) {
     }
   }, [appTheme]);
 
+  // Fonction pour charger les tickets (séparée pour pouvoir être appelée périodiquement)
+  async function loadTickets() {
+    if (!token || token.trim() === "") {
+      return;
+    }
+    
+    try {
+      const ticketsRes = await fetch("http://localhost:8000/tickets/", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      let ticketsData: Ticket[] = [];
+      if (ticketsRes.ok) {
+        ticketsData = await ticketsRes.json();
+        setAllTickets(ticketsData);
+        // Calculer les métriques
+        const openCount = ticketsData.filter((t: Ticket) => 
+          t.status !== "cloture" && t.status !== "resolu"
+        ).length;
+        setMetrics(prev => ({ ...prev, openTickets: openCount }));
+      }
+    } catch (err) {
+      console.error("Erreur lors du chargement des tickets:", err);
+    }
+  }
+
   useEffect(() => {
     async function loadData() {
       try {
         // Charger tous les tickets
-        const ticketsRes = await fetch("http://localhost:8000/tickets/", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        let ticketsData: Ticket[] = [];
-        if (ticketsRes.ok) {
-          ticketsData = await ticketsRes.json();
-          setAllTickets(ticketsData);
-          // Calculer les métriques
-          const openCount = ticketsData.filter((t: Ticket) => 
-            t.status !== "cloture" && t.status !== "resolu"
-          ).length;
-          setMetrics(prev => ({ ...prev, openTickets: openCount }));
-        }
+        await loadTickets();
 
         // Charger la liste des techniciens avec leurs stats
         const techRes = await fetch("http://localhost:8000/users/technicians", {
@@ -1235,9 +1279,42 @@ function DSIDashboard({ token }: DSIDashboardProps) {
               return Math.round(score);
             };
             
+            // Fonction helper pour formater le temps en heures et minutes (ou jours/heures si >= 24h)
+            const formatTimeInHoursMinutes = (hoursDecimal: number): string => {
+              if (hoursDecimal === 0) return "0 mn";
+              
+              // Si >= 24 heures, afficher en jours et heures
+              if (hoursDecimal >= 24) {
+                const days = Math.floor(hoursDecimal / 24);
+                const remainingHours = Math.floor(hoursDecimal % 24);
+                const minutes = Math.floor((hoursDecimal % 1) * 60);
+                
+                if (remainingHours === 0 && minutes === 0) {
+                  return `${days} jour${days > 1 ? 's' : ''}`;
+                } else if (remainingHours === 0) {
+                  return `${days} jour${days > 1 ? 's' : ''} ${minutes} mn`;
+                } else if (minutes === 0) {
+                  return `${days} jour${days > 1 ? 's' : ''} ${remainingHours} h`;
+                } else {
+                  return `${days} jour${days > 1 ? 's' : ''} ${remainingHours} h ${minutes} mn`;
+                }
+              }
+              
+              // Sinon, afficher en heures et minutes
+              const hours = Math.floor(hoursDecimal);
+              const minutes = Math.floor((hoursDecimal - hours) * 60);
+              if (hours === 0) {
+                return `${minutes} mn`;
+              } else if (minutes === 0) {
+                return `${hours} h`;
+              } else {
+                return `${hours} h ${minutes} mn`;
+              }
+            };
+            
             // Calculer le temps moyen de résolution réel
             const resolvedTickets = ticketsData.filter((t: Ticket) => t.status === "resolu" || t.status === "cloture");
-            let totalResolutionTime = 0;
+            let totalResolutionTimeHours = 0;
             let resolvedCount = 0;
             
             // Tableau pour stocker les satisfactions calculées (tous les tickets)
@@ -1276,9 +1353,9 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                     
                     if (resolvedDate && ticket.created_at) {
                       const created = new Date(ticket.created_at);
-                      const diffDays = Math.floor((resolvedDate.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
-                      if (diffDays >= 0) {
-                        totalResolutionTime += diffDays;
+                      const diffHours = (resolvedDate.getTime() - created.getTime()) / (1000 * 60 * 60);
+                      if (diffHours >= 0) {
+                        totalResolutionTimeHours += diffHours;
                         resolvedCount++;
                       }
                     }
@@ -1314,9 +1391,9 @@ function DSIDashboard({ token }: DSIDashboardProps) {
                     
                     if (resolvedDate) {
                       const created = new Date(ticket.created_at);
-                      const diffDays = Math.floor((resolvedDate.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
-                      if (diffDays >= 0) {
-                        totalResolutionTime += diffDays;
+                      const diffHours = (resolvedDate.getTime() - created.getTime()) / (1000 * 60 * 60);
+                      if (diffHours >= 0) {
+                        totalResolutionTimeHours += diffHours;
                         resolvedCount++;
                       }
                     }
@@ -1341,10 +1418,11 @@ function DSIDashboard({ token }: DSIDashboardProps) {
             // Les tickets non résolus ne sont pas inclus dans le calcul de satisfaction
             // car la satisfaction mesure la qualité du service rendu, qui n'est complète qu'après résolution
             
-            const avgResolutionDays = resolvedCount > 0 ? Math.round(totalResolutionTime / resolvedCount) : 0;
+            const avgResolutionHours = resolvedCount > 0 ? totalResolutionTimeHours / resolvedCount : 0;
+            const avgResolutionTimeFormatted = resolvedCount > 0 ? formatTimeInHoursMinutes(avgResolutionHours) : "0 mn";
             
             // Calculer la satisfaction moyenne (tous les tickets)
-            let satisfactionPct = "0";
+            let satisfactionPct: string | null = null;
             if (satisfactionScores.length > 0) {
               const avgSatisfaction = satisfactionScores.reduce((sum, score) => sum + score, 0) / satisfactionScores.length;
               satisfactionPct = avgSatisfaction.toFixed(1);
@@ -1360,8 +1438,8 @@ function DSIDashboard({ token }: DSIDashboardProps) {
             // Mettre à jour les métriques (en conservant openTickets déjà calculé)
             setMetrics(prev => ({
               ...prev,
-              avgResolutionTime: `${avgResolutionDays} jours`,
-              userSatisfaction: `${satisfactionPct}%`,
+              avgResolutionTime: avgResolutionTimeFormatted,
+              userSatisfaction: satisfactionPct !== null ? `${satisfactionPct}%` : null,
             }));
             
             // Mettre à jour la satisfaction moyenne des techniciens
@@ -1370,17 +1448,17 @@ function DSIDashboard({ token }: DSIDashboardProps) {
             // Si aucun ticket, mettre les valeurs à zéro
             setMetrics(prev => ({
               ...prev,
-              avgResolutionTime: "0 jours",
+              avgResolutionTime: "0 mn",
               userSatisfaction: "0%",
             }));
             setTechniciansSatisfaction("0.0");
           }
         } catch (err) {
           console.log("Erreur calcul métriques:", err);
-          // En cas d'erreur, mettre les valeurs à zéro
+          // En cas d'erreur, mettre les valeurs par défaut
           setMetrics(prev => ({
             ...prev,
-            avgResolutionTime: "0 jours",
+            avgResolutionTime: "0 minutes",
             userSatisfaction: "0%",
           }));
           setTechniciansSatisfaction("0.0");
@@ -1392,17 +1470,230 @@ function DSIDashboard({ token }: DSIDashboardProps) {
        } catch (err) {
          console.error("Erreur chargement données:", err);
        }
-     }
-     void loadData();
+    }
+    void loadData();
 
-     // Recharger les notifications toutes les 30 secondes
-     const interval = setInterval(() => {
-       void loadNotifications();
-       void loadUnreadCount();
-     }, 30000);
+    // Recharger automatiquement les tickets et notifications toutes les 30 secondes
+    // Cela permet aux métriques (temps moyen, satisfaction, etc.) de se mettre à jour automatiquement avec les données réelles
+    const interval = setInterval(() => {
+      void loadTickets(); // Rafraîchir les tickets pour mettre à jour les métriques automatiquement
+      void loadNotifications();
+      void loadUnreadCount();
+    }, 30000);
      
-    return () => clearInterval(interval);
+     return () => clearInterval(interval);
   }, [token]);
+
+  // Recalculer les métriques quand allTickets change (quand un ticket est traité)
+  useEffect(() => {
+    if (allTickets.length === 0) return;
+    
+    async function recalculateMetrics() {
+      try {
+        // Fonction helper pour formater le temps en heures et minutes (ou jours/heures si >= 24h)
+        const formatTimeInHoursMinutes = (hoursDecimal: number): string => {
+          if (hoursDecimal === 0) return "0 mn";
+          
+          // Si >= 24 heures, afficher en jours et heures
+          if (hoursDecimal >= 24) {
+            const days = Math.floor(hoursDecimal / 24);
+            const remainingHours = Math.floor(hoursDecimal % 24);
+            const minutes = Math.floor((hoursDecimal % 1) * 60);
+            
+            if (remainingHours === 0 && minutes === 0) {
+              return `${days} jour${days > 1 ? 's' : ''}`;
+            } else if (remainingHours === 0) {
+              return `${days} jour${days > 1 ? 's' : ''} ${minutes} mn`;
+            } else if (minutes === 0) {
+              return `${days} jour${days > 1 ? 's' : ''} ${remainingHours} h`;
+            } else {
+              return `${days} jour${days > 1 ? 's' : ''} ${remainingHours} h ${minutes} mn`;
+            }
+          }
+          
+          // Sinon, afficher en heures et minutes
+          const hours = Math.floor(hoursDecimal);
+          const minutes = Math.floor((hoursDecimal - hours) * 60);
+          if (hours === 0) {
+            return `${minutes} mn`;
+          } else if (minutes === 0) {
+            return `${hours} h`;
+          } else {
+            return `${hours} h ${minutes} mn`;
+          }
+        };
+        
+        // Même logique de calcul que dans loadData mais uniquement pour les métriques
+        const resolvedTickets = allTickets.filter((t: Ticket) => t.status === "resolu" || t.status === "cloture");
+        let totalResolutionTimeHours = 0;
+        let resolvedCount = 0;
+        const satisfactionScores: number[] = [];
+        const techniciansSatisfactionScores: number[] = [];
+        
+        // Fonction pour calculer la satisfaction implicite (même logique que dans loadData)
+        const calculateImplicitSatisfaction = async (ticket: Ticket, history: TicketHistory[]): Promise<number> => {
+          let score = 0;
+          if (ticket.created_at) {
+            const created = new Date(ticket.created_at);
+            let resolvedDate: Date | null = null;
+            if (ticket.status === "cloture" && ticket.closed_at) {
+              resolvedDate = new Date(ticket.closed_at);
+            } else if (ticket.status === "resolu" && ticket.resolved_at) {
+              resolvedDate = new Date(ticket.resolved_at);
+            }
+            
+            if (resolvedDate) {
+              const diffHours = (resolvedDate.getTime() - created.getTime()) / (1000 * 60 * 60);
+              const diffDays = diffHours / 24;
+              
+              let resolutionScore = 0;
+              if (ticket.priority === "haute" || ticket.priority === "critique") {
+                if (diffHours < 24) resolutionScore = 100;
+                else if (diffHours < 48) resolutionScore = 80;
+                else if (diffHours < 72) resolutionScore = 60;
+                else resolutionScore = 40;
+              } else if (ticket.priority === "moyenne") {
+                if (diffDays < 3) resolutionScore = 100;
+                else if (diffDays < 5) resolutionScore = 80;
+                else if (diffDays < 7) resolutionScore = 60;
+                else resolutionScore = 40;
+              } else {
+                if (diffDays < 7) resolutionScore = 100;
+                else if (diffDays < 14) resolutionScore = 80;
+                else if (diffDays < 21) resolutionScore = 60;
+                else resolutionScore = 40;
+              }
+              score += resolutionScore * 0.4;
+            }
+            
+            const reopenCount = history.filter(h => h.old_status === "cloture" || h.old_status === "resolu").length;
+            if (reopenCount === 0) score += 100 * 0.3;
+            else if (reopenCount === 1) score += 70 * 0.3;
+            else score += 40 * 0.3;
+            
+            const assignmentChanges = history.filter(h => h.new_status === "assigne_technicien" || h.new_status === "en_cours").length;
+            if (assignmentChanges <= 1) score += 100 * 0.2;
+            else if (assignmentChanges === 2) score += 50 * 0.2;
+            else score += 20 * 0.2;
+            
+            const firstResponse = history.find(h => h.new_status === "assigne_technicien" || h.new_status === "en_cours");
+            if (firstResponse && ticket.created_at) {
+              const created = new Date(ticket.created_at);
+              const firstResponseTime = new Date(firstResponse.changed_at);
+              const responseHours = (firstResponseTime.getTime() - created.getTime()) / (1000 * 60 * 60);
+              if (responseHours < 2) score += 100 * 0.1;
+              else if (responseHours < 4) score += 80 * 0.1;
+              else if (responseHours < 8) score += 60 * 0.1;
+              else score += 40 * 0.1;
+            } else {
+              score += 60 * 0.1;
+            }
+          }
+          return Math.round(score);
+        };
+        
+        await Promise.all(
+          resolvedTickets.map(async (ticket: Ticket) => {
+            if (!ticket.created_at) return;
+            
+            try {
+              const historyRes = await fetch(`http://localhost:8000/tickets/${ticket.id}/history`, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              
+              if (historyRes.ok) {
+                const history: TicketHistory[] = await historyRes.json();
+                const resolutionHistory = history.find(h => h.new_status === "resolu" || h.new_status === "cloture");
+                
+                let resolvedDate: Date | null = null;
+                if (resolutionHistory && resolutionHistory.changed_at) {
+                  resolvedDate = new Date(resolutionHistory.changed_at);
+                } else if (ticket.status === "cloture" && ticket.closed_at) {
+                  resolvedDate = new Date(ticket.closed_at);
+                } else if (ticket.status === "resolu" && ticket.resolved_at) {
+                  resolvedDate = new Date(ticket.resolved_at);
+                }
+                
+                if (resolvedDate && ticket.created_at) {
+                  const created = new Date(ticket.created_at);
+                  const diffHours = (resolvedDate.getTime() - created.getTime()) / (1000 * 60 * 60);
+                  if (diffHours >= 0) {
+                    totalResolutionTimeHours += diffHours;
+                    resolvedCount++;
+                  }
+                }
+                
+                let score: number | null = null;
+                if (ticket.feedback_score !== null && ticket.feedback_score !== undefined && ticket.feedback_score > 0) {
+                  score = (ticket.feedback_score / 5) * 100;
+                  satisfactionScores.push(score);
+                } else {
+                  score = await calculateImplicitSatisfaction(ticket, history);
+                  satisfactionScores.push(score);
+                }
+                
+                if (ticket.technician_id !== null && score !== null) {
+                  techniciansSatisfactionScores.push(score);
+                }
+              }
+            } catch (err) {
+              console.error(`Erreur historique ticket ${ticket.id}:`, err);
+              if (ticket.created_at) {
+                let resolvedDate: Date | null = null;
+                if (ticket.status === "cloture" && ticket.closed_at) {
+                  resolvedDate = new Date(ticket.closed_at);
+                } else if (ticket.status === "resolu" && ticket.resolved_at) {
+                  resolvedDate = new Date(ticket.resolved_at);
+                }
+                
+                if (resolvedDate) {
+                  const created = new Date(ticket.created_at);
+                  const diffHours = (resolvedDate.getTime() - created.getTime()) / (1000 * 60 * 60);
+                  if (diffHours >= 0) {
+                    totalResolutionTimeHours += diffHours;
+                    resolvedCount++;
+                  }
+                }
+              }
+              
+              if (ticket.feedback_score !== null && ticket.feedback_score !== undefined && ticket.feedback_score > 0) {
+                const score = (ticket.feedback_score / 5) * 100;
+                satisfactionScores.push(score);
+                if (ticket.technician_id !== null) {
+                  techniciansSatisfactionScores.push(score);
+                }
+              }
+            }
+          })
+        );
+        
+        const avgResolutionHours = resolvedCount > 0 ? totalResolutionTimeHours / resolvedCount : 0;
+        const avgResolutionTimeFormatted = resolvedCount > 0 ? formatTimeInHoursMinutes(avgResolutionHours) : "0 mn";
+        let satisfactionPct: string | null = null;
+        if (satisfactionScores.length > 0) {
+          const avgSatisfaction = satisfactionScores.reduce((sum, score) => sum + score, 0) / satisfactionScores.length;
+          satisfactionPct = avgSatisfaction.toFixed(1);
+        }
+        
+        let techniciansSatisfactionPct = "0.0";
+        if (techniciansSatisfactionScores.length > 0) {
+          const avgTechniciansSatisfaction = techniciansSatisfactionScores.reduce((sum, score) => sum + score, 0) / techniciansSatisfactionScores.length;
+          techniciansSatisfactionPct = avgTechniciansSatisfaction.toFixed(1);
+        }
+        
+        setMetrics(prev => ({
+          ...prev,
+          avgResolutionTime: avgResolutionTimeFormatted,
+          userSatisfaction: satisfactionPct !== null ? `${satisfactionPct}%` : null,
+        }));
+        setTechniciansSatisfaction(techniciansSatisfactionPct);
+      } catch (err) {
+        console.error("Erreur recalcul métriques:", err);
+      }
+    }
+    
+    void recalculateMetrics();
+  }, [allTickets, token]);
 
   // Mettre à jour l'heure actuelle toutes les minutes pour recalculer le statut de disponibilité
   useEffect(() => {
@@ -3319,7 +3610,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
               marginBottom: "3px",
             }}
           >
-            {metrics.avgResolutionTime}
+            {metrics.avgResolutionTime ?? "Chargement..."}
           </div>
           <div style={{ fontSize: "11px", fontWeight: 500, color: "#374151" }}>
             Temps moyen
@@ -3361,7 +3652,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
               marginBottom: "3px",
             }}
           >
-            {metrics.userSatisfaction}
+            {metrics.userSatisfaction ?? "Chargement..."}
           </div>
           <div style={{ fontSize: "11px", fontWeight: 500, color: "#374151" }}>
             Satisfaction client
@@ -11253,7 +11544,11 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                   const ticket = allTickets.find(t => t.id === reassignTicketId);
                   const filteredTechs = ticket ? getFilteredTechnicians(ticket.type) : technicians;
                   return filteredTechs.map((tech) => {
-                    const workload = tech.assigned_tickets_count || 0;
+                    const workload = allTickets.filter((tk) => 
+                      tk.technician_id === tech.id && 
+                      (tk.status === "assigne_technicien" || tk.status === "en_cours") &&
+                      tk.status !== "resolu" && tk.status !== "cloture"
+                    ).length;
                     const specialization = tech.specialization ? ` (${tech.specialization})` : "";
                     return (
                       <option key={tech.id} value={tech.id}>
@@ -11392,7 +11687,11 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                   const ticket = allTickets.find(t => t.id === assignTicketId);
                   const filteredTechs = ticket ? getFilteredTechnicians(ticket.type) : technicians;
                   return filteredTechs.map((tech) => {
-                    const workload = tech.assigned_tickets_count || 0;
+                    const workload = allTickets.filter((tk) => 
+                      tk.technician_id === tech.id && 
+                      (tk.status === "assigne_technicien" || tk.status === "en_cours") &&
+                      tk.status !== "resolu" && tk.status !== "cloture"
+                    ).length;
                     const specialization = tech.specialization ? ` (${tech.specialization})` : "";
                     return (
                       <option key={tech.id} value={tech.id}>
@@ -11612,7 +11911,11 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                   const ticket = allTickets.find(t => t.id === reopenTicketId);
                   const filteredTechs = ticket ? getFilteredTechnicians(ticket.type) : technicians;
                   return filteredTechs.map((tech) => {
-                    const workload = tech.assigned_tickets_count || 0;
+                    const workload = allTickets.filter((tk) => 
+                      tk.technician_id === tech.id && 
+                      (tk.status === "assigne_technicien" || tk.status === "en_cours") &&
+                      tk.status !== "resolu" && tk.status !== "cloture"
+                    ).length;
                     const specialization = tech.specialization ? ` (${tech.specialization})` : "";
                     return (
                       <option key={tech.id} value={tech.id}>

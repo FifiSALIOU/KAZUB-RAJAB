@@ -1727,7 +1727,7 @@ function UserDashboard({ token: tokenProp }: UserDashboardProps) {
                 {activeSection === "dashboard" ? "Mes Tickets Récents" : "Mes Tickets"}
               </h3>
             </div>
-            {activeSection === "dashboard" && (
+            {(activeSection === "dashboard" || activeSection === "tickets") && (
               <div style={{ 
                 display: "flex", 
                 alignItems: "center", 
@@ -1817,7 +1817,7 @@ function UserDashboard({ token: tokenProp }: UserDashboardProps) {
                   </td>
                 </tr>
               ) : (
-                (activeSection === "dashboard"
+                (activeSection === "dashboard" || activeSection === "tickets"
                   ? tickets.filter((t) => {
                     const search = dashboardSearch.trim().toLowerCase();
                     const matchesSearch = !search || 
@@ -2483,7 +2483,7 @@ function UserDashboard({ token: tokenProp }: UserDashboardProps) {
                               setShowRejectionForm(false);
                               setRejectionReason("");
                             }}
-                        style={{ flex: 1, padding: "10px", background: "#f5f5f5", border: "1px solid #ddd", borderRadius: "4px", cursor: "pointer" }}
+                        style={{ flex: 1, padding: "10px", background: "#f5f5f5", border: "1px solid #ddd", borderRadius: "4px", cursor: "pointer", color: "#333" }}
                       >
                         Annuler
                       </button>
@@ -2523,7 +2523,7 @@ function UserDashboard({ token: tokenProp }: UserDashboardProps) {
                             style={{ 
                               flex: 1, 
                               padding: "10px", 
-                              backgroundColor: rejectionReason.trim() ? "#dc3545" : "#ccc", 
+                              backgroundColor: "#dc3545", 
                               color: "white", 
                               border: "none", 
                               borderRadius: "4px", 
@@ -2538,7 +2538,7 @@ function UserDashboard({ token: tokenProp }: UserDashboardProps) {
                               setRejectionReason("");
                             }}
                             disabled={loading}
-                            style={{ flex: 1, padding: "10px", background: "#f5f5f5", border: "1px solid #ddd", borderRadius: "4px", cursor: "pointer" }}
+                            style={{ flex: 1, padding: "10px", background: "#f5f5f5", border: "1px solid #ddd", borderRadius: "4px", cursor: "pointer", color: "#000" }}
                           >
                             Retour
                           </button>
@@ -2548,7 +2548,7 @@ function UserDashboard({ token: tokenProp }: UserDashboardProps) {
                               setShowRejectionForm(false);
                               setRejectionReason("");
                             }}
-                            style={{ flex: 1, padding: "10px", background: "#f5f5f5", border: "1px solid #ddd", borderRadius: "4px", cursor: "pointer" }}
+                            style={{ flex: 1, padding: "10px", background: "#f5f5f5", border: "1px solid #ddd", borderRadius: "4px", cursor: "pointer", color: "#000" }}
                           >
                             Annuler
                           </button>
