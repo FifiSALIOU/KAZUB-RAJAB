@@ -130,13 +130,20 @@ def get_technician_stats(
     )
     
     # Calculer le temps moyen de résolution (en jours)
+    # Formule : Temps moyen = (Somme des temps de résolution) / (Nombre de tickets résolus/clôturés)
+    # Temps de résolution = Date de clôture (ou résolution) - Date de création
     total_resolution_time = 0
     resolved_count = 0
     for ticket in resolved_tickets + closed_tickets:
-        if ticket.assigned_at and ticket.resolved_at:
-            time_diff = (ticket.resolved_at - ticket.assigned_at).total_seconds() / 86400  # Convertir en jours
-            total_resolution_time += time_diff
-            resolved_count += 1
+        if ticket.created_at:
+            # Utiliser closed_at si disponible (ticket clôturé), sinon resolved_at (ticket résolu mais pas encore clôturé)
+            end_date = ticket.closed_at if ticket.closed_at else ticket.resolved_at
+            if end_date:
+                time_diff = (end_date - ticket.created_at).total_seconds() / 86400  # Convertir en jours
+                # Ne compter que si le résultat est valide (différence positive)
+                if time_diff >= 0:
+                    total_resolution_time += time_diff
+                    resolved_count += 1
     
     avg_resolution_time = round(total_resolution_time / resolved_count, 1) if resolved_count > 0 else 0
     
