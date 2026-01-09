@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import { PanelLeft, Users, Clock3, TrendingUp, Award, UserCheck, Star, LayoutDashboard, ChevronLeft, ChevronRight, Bell } from "lucide-react";
+import { Users, Clock3, TrendingUp, Award, UserCheck, Star, LayoutDashboard, ChevronLeft, ChevronRight, Bell } from "lucide-react";
 import React from "react";
 import helpdeskLogo from "../assets/helpdesk-logo.png";
 import jsPDF from "jspdf";
@@ -113,6 +113,11 @@ interface UserRead {
 
 function DSIDashboard({ token }: DSIDashboardProps) {
   const [searchParams] = useSearchParams();
+  
+  // Fonction helper pour formater le numéro de ticket en "TK-XXX"
+  const formatTicketNumber = (number: number): string => {
+    return `TK-${number.toString().padStart(3, '0')}`;
+  };
   
   // Déterminer le statut simple Actif / Inactif à partir de actif (Boolean)
   function getAvailabilityStatus(tech: Technician): string {
@@ -486,45 +491,6 @@ function DSIDashboard({ token }: DSIDashboardProps) {
       }
     }
   }, [searchParams, allTickets]);
-  
-  // Gérer la fermeture du menu d'actions quand on clique en dehors
-  useEffect(() => {
-    if (!openActionsMenuFor) return;
-
-    // Ajouter un petit délai pour éviter que le listener se déclenche sur le même clic qui ouvre le menu
-    const timeoutId = setTimeout(() => {
-      const handleClickOutside = (event: MouseEvent) => {
-        const target = event.target as HTMLElement;
-        // Vérifier si le clic est en dehors du menu et du bouton qui l'ouvre
-        const menu = document.querySelector(`[data-menu-id="${openActionsMenuFor}"]`);
-        const isClickInsideMenu = menu && menu.contains(target);
-        const isClickOnMenuButton = target.closest('[aria-label="Actions"]');
-        
-        if (!isClickInsideMenu && !isClickOnMenuButton) {
-          setOpenActionsMenuFor(null);
-          setActionsMenuPosition(null);
-        }
-      };
-
-      const handleScroll = () => {
-        setOpenActionsMenuFor(null);
-        setActionsMenuPosition(null);
-      };
-
-      document.addEventListener("click", handleClickOutside);
-      window.addEventListener("scroll", handleScroll, true);
-
-      // Cleanup
-      return () => {
-        document.removeEventListener("click", handleClickOutside);
-        window.removeEventListener("scroll", handleScroll, true);
-      };
-    }, 100);
-
-    return () => {
-      clearTimeout(timeoutId);
-    };
-  }, [openActionsMenuFor]);
   
   const [newUser, setNewUser] = useState({
     full_name: "",
@@ -2510,7 +2476,6 @@ function DSIDashboard({ token }: DSIDashboardProps) {
 
   // Statistiques agrégées pour la section Techniciens
   const activeTechniciansCount = technicians.filter((tech) => {
-    const status = tech.status?.toLowerCase() || "";
     return tech.actif === true;
   }).length;
 
@@ -5268,13 +5233,13 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
         <div style={{ flex: 1, padding: "30px", overflow: activeSection === "notifications" ? "hidden" : "auto", paddingTop: "80px" }}>
           {activeSection === "dashboard" && (
             <>
-      {/* En-tête centre d'assignation */}
-      <div style={{ marginTop: "8px", marginBottom: "20px" }}>
+      {/* En-tête tableau de bord DSI */}
+      <div style={{ marginTop: "32px", marginBottom: "20px" }}>
         <div style={{ fontSize: "22px", fontWeight: 700, color: "#111827", marginBottom: "4px" }}>
-          Centre d'Assignation
+          Tableau de bord DSI 🎯
         </div>
         <div style={{ fontSize: "15px", color: "#4b5563" }}>
-          Répartissez les tickets à votre équipe technique
+          Vue d'ensemble des tickets et de l'équipe
         </div>
       </div>
 
@@ -5641,443 +5606,413 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
               </select>
             </div>
           </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", background: "white", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
-            <thead>
-              <tr style={{ background: "#f8f9fa" }}>
-                <th style={{ padding: "12px 16px", textAlign: "left", borderBottom: "1px solid #dee2e6" }}>ID</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", borderBottom: "1px solid #dee2e6" }}>Titre</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", borderBottom: "1px solid #dee2e6" }}>Nom</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", borderBottom: "1px solid #dee2e6" }}>Agence</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", borderBottom: "1px solid #dee2e6" }}>Priorité</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", borderBottom: "1px solid #dee2e6" }}>Statut</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", borderBottom: "1px solid #dee2e6" }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(() => {
-                // Appliquer les filtres puis trier les tickets par date de création (plus récents en premier) et prendre les 5 premiers
-                let recentFilteredTickets = [...filteredTickets]
-                  .sort((a, b) => {
-                    const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
-                    const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-                    return dateB - dateA; // Tri décroissant (plus récent en premier)
-                  })
-                  .slice(0, 5); // Prendre les 5 premiers
-                
-                const recentTickets = recentFilteredTickets;
+          {/* Tickets Cards */}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "12px",
+              overflow: "visible",
+            }}
+          >
+            {(() => {
+              // Appliquer les filtres puis trier les tickets par date de création (plus récents en premier) et prendre les 5 premiers
+              let recentFilteredTickets = [...filteredTickets]
+                .sort((a, b) => {
+                  const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+                  const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+                  return dateB - dateA; // Tri décroissant (plus récent en premier)
+                })
+                .slice(0, 5); // Prendre les 5 premiers
+              
+              const recentTickets = recentFilteredTickets;
 
-                if (recentTickets.length === 0) {
-                  return (
-                    <tr>
-                      <td colSpan={7} style={{ textAlign: "center", padding: "20px", color: "#999" }}>
-                        Aucun ticket
-                      </td>
-                    </tr>
-                  );
-                }
+              if (recentTickets.length === 0) {
+                return (
+                  <div style={{ 
+                    textAlign: "center", 
+                    padding: "40px", 
+                    color: "#999", 
+                    fontWeight: "500",
+                    background: "white",
+                    borderRadius: "12px",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                  }}>
+                    Aucun ticket
+                  </div>
+                );
+              }
 
-                return recentTickets.map((t) => (
-                  <tr key={t.id} style={{ borderBottom: "1px solid #eee" }}>
-                    <td style={{ padding: "12px 16px" }}>#{t.number}</td>
-                    <td style={{ padding: "12px 16px" }}>{t.title}</td>
-                    <td style={{ padding: "12px 16px" }}>
-                      {t.creator ? t.creator.full_name : "N/A"}
-                    </td>
-                    <td style={{ padding: "12px 16px" }}>
-                      {t.creator ? (t.creator.agency || t.user_agency || "N/A") : (t.user_agency || "N/A")}
-                    </td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <span style={{
-                        padding: "6px 12px",
-                        borderRadius: "20px",
-                        fontSize: "12px",
-                        fontWeight: "500",
-                        background: t.priority === "critique" ? "#fee2e2" : t.priority === "haute" ? "rgba(245, 158, 11, 0.1)" : t.priority === "moyenne" ? "rgba(13, 173, 219, 0.1)" : t.priority === "faible" ? "#E5E7EB" : "#e5e7eb",
-                        color: t.priority === "critique" ? "#991b1b" : t.priority === "haute" ? "#F59E0B" : t.priority === "moyenne" ? "#0DADDB" : t.priority === "faible" ? "#6B7280" : "#374151"
-                      }}>
-                        {getPriorityLabel(t.priority)}
-                      </span>
-                    </td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <span style={{
-                        padding: t.status === "en_cours" ? "2px 10px" : "6px 12px",
-                        borderRadius: t.status === "en_cours" ? "9999px" : "20px",
-                        fontSize: "12px",
-                        fontWeight: t.status === "en_cours" ? "600" : "500",
-                        background: t.status === "en_attente_analyse" ? "rgba(13, 173, 219, 0.1)" : 
-                                   t.status === "assigne_technicien" ? "#f0f9ff" : 
-                                   t.status === "en_cours" ? "rgba(15, 31, 61, 0.1)" : 
-                                   t.status === "resolu" ? "rgba(47, 158, 68, 0.1)" : 
-                                   t.status === "cloture" ? "#e5e7eb" :
-                                   t.status === "rejete" ? "#fee2e2" : "#e5e7eb",
-                        color: t.status === "en_attente_analyse" ? "#0DADDB" : 
-                               t.status === "assigne_technicien" ? "#0c4a6e" : 
-                               t.status === "en_cours" ? "#0F1F3D" : 
-                               t.status === "resolu" ? "#2F9E44" : 
-                               t.status === "cloture" ? "#374151" :
-                               t.status === "rejete" ? "#991b1b" : "#374151",
-                        whiteSpace: "nowrap",
-                        display: "inline-block"
-                      }}>
-                        {t.status === "en_attente_analyse" ? "En attente d'assignation" :
-                         t.status === "assigne_technicien" ? "Assigné" :
-                         t.status === "en_cours" ? "En cours" :
-                         t.status === "resolu" ? "Résolu" :
-                         t.status === "cloture" ? "Clôturé" :
-                         t.status === "rejete" ? "Rejeté" : t.status}
-                      </span>
-                    </td>
-                    <td style={{ padding: "12px 16px" }}>
-                      {t.status === "cloture" ? (
-                        // Icône œil pour voir les détails des tickets clôturés (même style que technicien)
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            loadTicketDetails(t.id);
-                          }}
-                          style={{
-                            background: "#6b7280",
-                            border: "1px solid white",
-                            borderRadius: "6px",
-                            cursor: "pointer",
-                            padding: "6px 8px",
+              return recentTickets.map((t) => {
+                // Fonction helper pour obtenir les initiales
+                const getInitials = (name: string) => {
+                  if (!name) return "??";
+                  const parts = name.split(" ");
+                  if (parts.length >= 2) {
+                    return (parts[0][0] + parts[1][0]).toUpperCase();
+                  }
+                  return name.substring(0, 2).toUpperCase();
+                };
+
+                // Fonction helper pour calculer la date relative
+                const getRelativeTime = (date: string) => {
+                  const now = new Date();
+                  const past = new Date(date);
+                  const diffInMs = now.getTime() - past.getTime();
+                  const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
+                  
+                  if (diffInDays === 0) return "aujourd'hui";
+                  if (diffInDays === 1) return "il y a 1 jour";
+                  return `il y a ${diffInDays} jours`;
+                };
+
+                // Couleur de la barre selon la priorité
+                const borderColor = t.priority === "critique" ? "#E53E3E" : 
+                                   t.priority === "haute" ? "#F59E0B" : 
+                                   t.priority === "faible" ? "rgba(107, 114, 128, 0.3)" : 
+                                   "#0DADDB";
+
+                // Déterminer le type de ticket basé sur la catégorie
+                const category = t.category || "";
+                const isApplicatif = category.toLowerCase().includes("logiciel") || 
+                                    category.toLowerCase().includes("applicatif") ||
+                                    category.toLowerCase().includes("application");
+                const categoryType = isApplicatif ? "Applicatif" : "Matériel";
+
+                return (
+                  <div
+                    key={t.id} 
+                    onClick={() => loadTicketDetails(t.id)}
+                    style={{
+                      position: "relative",
+                      background: "white",
+                      borderRadius: "12px",
+                      padding: "16px",
+                      border: "1px solid #e5e7eb",
+                      boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
+                      cursor: "pointer",
+                      transition: "all 0.2s ease",
+                      overflow: "visible",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = "translateY(-2px)";
+                      e.currentTarget.style.boxShadow = "0 6px 24px rgba(0,0,0,0.15)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = "translateY(0)";
+                      e.currentTarget.style.boxShadow = "0 4px 20px rgba(0,0,0,0.1)";
+                    }}
+                  >
+                    {/* Barre de priorité à gauche */}
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: "4px",
+                        background: borderColor,
+                        borderTopLeftRadius: "12px",
+                        borderBottomLeftRadius: "12px",
+                      }}
+                    />
+
+                    {/* En-tête : ID + Badges + Menu 3 points */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                        <span style={{ fontSize: "14px", color: "#1f2937", fontFamily: "monospace", fontWeight: "600" }}>
+                          {formatTicketNumber(t.number)}
+                        </span>
+                        
+                        {/* Badge Statut */}
+                        <span style={{
+                          padding: t.status === "en_cours" ? "2px 10px" : "3px 8px",
+                          borderRadius: "20px",
+                          fontSize: t.status === "en_cours" ? "12px" : "10px",
+                          fontWeight: "500",
+                          background: t.status === "en_attente_analyse" ? "rgba(13, 173, 219, 0.1)" : 
+                                     t.status === "assigne_technicien" ? "rgba(255, 122, 27, 0.1)" : 
+                                     t.status === "en_cours" ? "rgba(15, 31, 61, 0.1)" : 
+                                     t.status === "resolu" ? "rgba(47, 158, 68, 0.1)" : 
+                                     t.status === "rejete" ? "#fee2e2" : 
+                                     t.status === "cloture" ? "#e5e7eb" : "#e5e7eb",
+                          color: t.status === "en_attente_analyse" ? "#0DADDB" : 
+                                 t.status === "assigne_technicien" ? "#FF7A1B" : 
+                                 t.status === "en_cours" ? "#0F1F3D" : 
+                                 t.status === "resolu" ? "#2F9E44" : 
+                                 t.status === "rejete" ? "#991b1b" : 
+                                 t.status === "cloture" ? "#374151" : "#374151",
+                          whiteSpace: "nowrap",
+                        }}>
+                          {t.status === "en_attente_analyse" ? "En attente d'assignation" :
+                           t.status === "assigne_technicien" ? "Assigné" :
+                           t.status === "en_cours" ? "En cours" :
+                           t.status === "resolu" ? "Résolu" :
+                           t.status === "rejete" ? "Rejeté" :
+                           t.status === "cloture" ? "Clôturé" : t.status}
+                        </span>
+
+                        {/* Badge Priorité */}
+                        <span style={{
+                          padding: "3px 8px",
+                          borderRadius: "20px",
+                          fontSize: "10px",
+                          fontWeight: "500",
+                          background: t.priority === "critique" ? "rgba(229, 62, 62, 0.1)" : 
+                                     t.priority === "haute" ? "rgba(245, 158, 11, 0.1)" : 
+                                     t.priority === "moyenne" ? "rgba(13, 173, 219, 0.1)" : 
+                                     t.priority === "faible" ? "#E5E7EB" : "#e5e7eb",
+                          color: t.priority === "critique" ? "#E53E3E" : 
+                                 t.priority === "haute" ? "#F59E0B" : 
+                                 t.priority === "moyenne" ? "#0DADDB" : 
+                                 t.priority === "faible" ? "#6B7280" : "#374151",
+                          whiteSpace: "nowrap",
+                        }}>
+                          {t.priority.charAt(0).toUpperCase() + t.priority.slice(1)}
+                        </span>
+
+                        {/* Badge Catégorie */}
+                        {t.category && (
+                          <span style={{
+                            padding: "3px 8px",
+                            borderRadius: "20px",
+                            fontSize: "10px",
+                            fontWeight: "500",
+                            background: "#f3f4f6",
+                            color: "#1f2937",
+                            whiteSpace: "nowrap",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                          }}>
+                            {isApplicatif ? (
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                                <line x1="8" y1="21" x2="16" y2="21"></line>
+                                <line x1="12" y1="17" x2="12" y2="21"></line>
+                              </svg>
+                            ) : (
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+                              </svg>
+                            )}
+                            <span>{categoryType}</span>
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Menu 3 points ou icône œil (pour clôturé) */}
+                      <div style={{ position: "relative" }}>
+                        {t.status === "cloture" ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              loadTicketDetails(t.id);
+                            }}
+                            style={{
+                              background: "#6b7280",
+                              border: "1px solid white",
+                              borderRadius: "6px",
+                              cursor: "pointer",
+                              padding: "6px 8px",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              width: "32px",
+                              height: "32px"
+                            }}
+                            title="Voir les détails"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"></path>
+                              <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                
+                                const isOpen = openActionsMenuFor === t.id;
+                                if (isOpen) {
+                                  setOpenActionsMenuFor(null);
+                                  setActionsMenuPosition(null);
+                                  return;
+                                }
+
+                                const buttonRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                const viewportHeight = window.innerHeight;
+                                const menuWidth = 220;
+                                const menuHeight = 220;
+
+                                let top = buttonRect.bottom + 4;
+                                if (viewportHeight - buttonRect.bottom < menuHeight && buttonRect.top > menuHeight) {
+                                  top = buttonRect.top - menuHeight - 4;
+                                }
+
+                                let left = buttonRect.right - menuWidth;
+                                if (left < 8) left = 8;
+
+                                setActionsMenuPosition({ top, left });
+                                setOpenActionsMenuFor(t.id);
+                              }}
+                              disabled={loading}
+                              title="Actions"
+                              aria-label="Actions"
+                              style={{
+                                width: 28,
+                                height: 28,
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                background: "transparent",
+                                border: "none",
+                                borderRadius: "4px",
+                                cursor: "pointer",
+                                color: "#475569",
+                                backgroundImage:
+                                  "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='5' r='2' fill='%23475569'/><circle cx='12' cy='12' r='2' fill='%23475569'/><circle cx='12' cy='19' r='2' fill='%23475569'/></svg>\")",
+                                backgroundRepeat: "no-repeat",
+                                backgroundPosition: "center",
+                                backgroundSize: "18px 18px",
+                                transition: "background-color 0.2s",
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.backgroundColor = "#f3f4f6";
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.backgroundColor = "transparent";
+                              }}
+                            />
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Titre du ticket */}
+                    <h4 style={{
+                      fontSize: "14px",
+                      fontWeight: "600",
+                      color: "#1f2937",
+                      marginBottom: "6px",
+                      lineHeight: "1.3",
+                    }}>
+                      {t.title}
+                    </h4>
+
+                    {/* Description du ticket */}
+                    <p style={{
+                      fontSize: "13px",
+                      color: "#6b7280",
+                      marginBottom: "12px",
+                      lineHeight: "1.4",
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                    }}>
+                      {t.description || "Aucune description"}
+                    </p>
+
+                    {/* Pied de carte : Créateur, Date, Agence, Assigné */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                        {/* Avatar + Nom créateur */}
+                        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                          <div style={{
+                            width: "28px",
+                            height: "28px",
+                            borderRadius: "50%",
+                            background: "#e5e7eb",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
-                            width: "32px",
-                            height: "32px"
-                          }}
-                          title="Voir les détails"
-                        >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"></path>
-                            <circle cx="12" cy="12" r="3"></circle>
-                          </svg>
-                        </button>
-                      ) : (
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px", position: "relative" }}>
-                          <button
-                            onClick={(e) => { 
-                              e.stopPropagation(); 
-                              
-                              const isOpen = openActionsMenuFor === t.id;
-                              if (isOpen) {
-                                setOpenActionsMenuFor(null);
-                                setActionsMenuPosition(null);
-                                return;
-                              }
-
-                              const buttonRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                              const viewportHeight = window.innerHeight;
-                              const menuWidth = 220;
-                              const menuHeight = 220; // hauteur approximative
-
-                              let top = buttonRect.bottom + 4; // par défaut en dessous
-                              // Si pas assez d'espace en bas mais assez en haut, afficher vers le haut
-                              if (viewportHeight - buttonRect.bottom < menuHeight && buttonRect.top > menuHeight) {
-                                top = buttonRect.top - menuHeight - 4;
-                              }
-
-                              let left = buttonRect.right - menuWidth;
-                              if (left < 8) left = 8;
-
-                              setActionsMenuPosition({ top, left });
-                              setOpenActionsMenuFor(t.id);
-                            }}
-                            disabled={loading}
-                            title="Actions"
-                            aria-label="Actions"
-                            style={{
-                              width: 28,
-                              height: 28,
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              background: "transparent",
-                              border: "none",
-                              borderRadius: 0,
-                              cursor: "pointer",
-                              color: "#475569",
-                              backgroundImage:
-                                "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='5' r='2' fill='%23475569'/><circle cx='12' cy='12' r='2' fill='%23475569'/><circle cx='12' cy='19' r='2' fill='%23475569'/></svg>\")",
-                              backgroundRepeat: "no-repeat",
-                              backgroundPosition: "center",
-                              backgroundSize: "18px 18px"
-                            }}
-                          />
-                          {openActionsMenuFor === t.id && actionsMenuPosition && (
-                            <div
-                              style={{
-                                position: "fixed",
-                                top: actionsMenuPosition.top,
-                                left: actionsMenuPosition.left,
-                                background: "white",
-                                border: "1px solid #e5e7eb",
-                                borderRadius: 8,
-                                boxShadow: "0 8px 16px rgba(0,0,0,0.1)",
-                                minWidth: 180,
-                                zIndex: 1000,
-                                maxHeight: 280,
-                                overflowY: "auto"
-                              }}
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {t.status === "en_attente_analyse" && (
-                                <>
-                                  <button
-                                    onClick={() => { loadTicketDetails(t.id); setOpenActionsMenuFor(null); }}
-                                    disabled={loading}
-                                    style={{ 
-                                      width: "100%", 
-                                      padding: "10px 12px", 
-                                      background: "transparent", 
-                                      border: "none", 
-                                      textAlign: "left", 
-                                      cursor: "pointer",
-                                      color: "#111827",
-                                      fontSize: "14px",
-                                      display: "block",
-                                      whiteSpace: "nowrap"
-                                    }}
-                                    onMouseEnter={(e) => {
-                                      e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                    }}
-                                    onMouseLeave={(e) => {
-                                      e.currentTarget.style.backgroundColor = "transparent";
-                                    }}
-                                  >
-                                    Voir détails
-                                  </button>
-                                  <button
-                                    onClick={() => { handleAssignClick(t.id); setOpenActionsMenuFor(null); }}
-                                    disabled={loading}
-                                    style={{ 
-                                      width: "100%", 
-                                      padding: "10px 12px", 
-                                      background: "transparent", 
-                                      border: "none", 
-                                      borderTop: "1px solid #e5e7eb",
-                                      textAlign: "left", 
-                                      cursor: loading ? "not-allowed" : "pointer",
-                                      color: "#111827",
-                                      fontSize: "14px",
-                                      display: "block",
-                                      whiteSpace: "nowrap",
-                                      opacity: loading ? 0.6 : 1
-                                    }}
-                                    onMouseEnter={(e) => {
-                                      if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                    }}
-                                    onMouseLeave={(e) => {
-                                      e.currentTarget.style.backgroundColor = "transparent";
-                                    }}
-                                  >
-                                    Assigner
-                                  </button>
-                                  {userRole === "DSI" && (
-                                    <button
-                                      onClick={() => { handleDelegateClick(t.id); setOpenActionsMenuFor(null); }}
-                                      disabled={loading}
-                                      style={{ 
-                                        width: "100%", 
-                                        padding: "10px 12px", 
-                                        background: "transparent", 
-                                        border: "none", 
-                                        borderTop: "1px solid #e5e7eb",
-                                        textAlign: "left", 
-                                        cursor: loading ? "not-allowed" : "pointer",
-                                        color: "#111827",
-                                        fontSize: "14px",
-                                        display: "block",
-                                        whiteSpace: "nowrap",
-                                        opacity: loading ? 0.6 : 1
-                                      }}
-                                      onMouseEnter={(e) => {
-                                        if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                      }}
-                                      onMouseLeave={(e) => {
-                                        e.currentTarget.style.backgroundColor = "transparent";
-                                      }}
-                                    >
-                                      Déléguer à un adjoint
-                                    </button>
-                                  )}
-                                  {canEscalate() && (
-                                    <button
-                                      onClick={() => { handleEscalate(t.id); setOpenActionsMenuFor(null); }}
-                                      disabled={loading}
-                                      style={{ 
-                                        width: "100%", 
-                                        padding: "10px 12px", 
-                                        background: "transparent", 
-                                        border: "none", 
-                                        borderTop: "1px solid #e5e7eb",
-                                        textAlign: "left", 
-                                        cursor: loading ? "not-allowed" : "pointer",
-                                        color: "#111827",
-                                        fontSize: "14px",
-                                        display: "block",
-                                        whiteSpace: "nowrap",
-                                        opacity: loading ? 0.6 : 1
-                                      }}
-                                      onMouseEnter={(e) => {
-                                        if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                      }}
-                                      onMouseLeave={(e) => {
-                                        e.currentTarget.style.backgroundColor = "transparent";
-                                      }}
-                                    >
-                                      Escalader
-                                    </button>
-                                  )}
-                                </>
-                              )}
-                              {(t.status === "assigne_technicien" || t.status === "en_cours") && (
-                                <>
-                                  <button
-                                    onClick={() => { loadTicketDetails(t.id); setOpenActionsMenuFor(null); }}
-                                    disabled={loading}
-                                    style={{ 
-                                      width: "100%", 
-                                      padding: "10px 12px", 
-                                      background: "transparent", 
-                                      border: "none", 
-                                      textAlign: "left", 
-                                      cursor: "pointer",
-                                      color: "#111827",
-                                      fontSize: "14px",
-                                      display: "block",
-                                      whiteSpace: "nowrap"
-                                    }}
-                                    onMouseEnter={(e) => {
-                                      e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                    }}
-                                    onMouseLeave={(e) => {
-                                      e.currentTarget.style.backgroundColor = "transparent";
-                                    }}
-                                  >
-                                    Voir détails
-                                  </button>
-                                  <button
-                                    onClick={() => { handleReassignClick(t.id); setOpenActionsMenuFor(null); }}
-                                    disabled={loading}
-                                    style={{ 
-                                      width: "100%", 
-                                      padding: "10px 12px", 
-                                      background: "transparent", 
-                                      border: "none", 
-                                      borderTop: "1px solid #e5e7eb",
-                                      textAlign: "left", 
-                                      cursor: loading ? "not-allowed" : "pointer",
-                                      color: "#111827",
-                                      fontSize: "14px",
-                                      display: "block",
-                                      whiteSpace: "nowrap",
-                                      opacity: loading ? 0.6 : 1
-                                    }}
-                                    onMouseEnter={(e) => {
-                                      if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                    }}
-                                    onMouseLeave={(e) => {
-                                      e.currentTarget.style.backgroundColor = "transparent";
-                                    }}
-                                  >
-                                    Réassigner
-                                  </button>
-                                  {canEscalate() && (
-                                    <button
-                                      onClick={() => { handleEscalate(t.id); setOpenActionsMenuFor(null); }}
-                                      disabled={loading}
-                                      style={{ 
-                                        width: "100%", 
-                                        padding: "10px 12px", 
-                                        background: "transparent", 
-                                        border: "none", 
-                                        borderTop: "1px solid #e5e7eb",
-                                        textAlign: "left", 
-                                        cursor: loading ? "not-allowed" : "pointer",
-                                        color: "#111827",
-                                        fontSize: "14px",
-                                        display: "block",
-                                        whiteSpace: "nowrap",
-                                        opacity: loading ? 0.6 : 1
-                                      }}
-                                      onMouseEnter={(e) => {
-                                        if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                      }}
-                                      onMouseLeave={(e) => {
-                                        e.currentTarget.style.backgroundColor = "transparent";
-                                      }}
-                                    >
-                                      Escalader
-                                    </button>
-                                  )}
-                                </>
-                              )}
-                              {t.status === "resolu" && (
-                                <button
-                                  onClick={() => { handleClose(t.id); setOpenActionsMenuFor(null); }}
-                                  disabled={loading}
-                                  style={{ 
-                                    width: "100%", 
-                                    padding: "10px 12px", 
-                                    background: "transparent", 
-                                    border: "none", 
-                                    textAlign: "left", 
-                                    cursor: loading ? "not-allowed" : "pointer",
-                                    color: "#111827",
-                                    fontSize: "14px",
-                                    display: "block",
-                                    whiteSpace: "nowrap",
-                                    opacity: loading ? 0.6 : 1
-                                  }}
-                                  onMouseEnter={(e) => {
-                                    if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                  }}
-                                  onMouseLeave={(e) => {
-                                    e.currentTarget.style.backgroundColor = "transparent";
-                                  }}
-                                >
-                                  Clôturer
-                                </button>
-                              )}
-                              {t.status === "rejete" && (
-                                <button
-                                  onClick={() => { handleReopenClick(t.id); setOpenActionsMenuFor(null); }}
-                                  disabled={loading}
-                                  style={{ 
-                                    width: "100%", 
-                                    padding: "10px 12px", 
-                                    background: "transparent", 
-                                    border: "none", 
-                                    textAlign: "left", 
-                                    cursor: loading ? "not-allowed" : "pointer",
-                                    color: "#111827",
-                                    fontSize: "14px",
-                                    display: "block",
-                                    whiteSpace: "nowrap",
-                                    opacity: loading ? 0.6 : 1
-                                  }}
-                                  onMouseEnter={(e) => {
-                                    if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                  }}
-                                  onMouseLeave={(e) => {
-                                    e.currentTarget.style.backgroundColor = "transparent";
-                                  }}
-                                >
-                                  Réouvrir
-                                </button>
-                              )}
-                            </div>
-                          )}
+                            fontSize: "11px",
+                            fontWeight: "600",
+                            color: "#374151",
+                          }}>
+                            {getInitials(t.creator?.full_name || "Inconnu")}
+                          </div>
+                          <span style={{ fontSize: "12px", color: "#374151", fontWeight: "500" }}>
+                            {t.creator?.full_name || "N/A"}
+                          </span>
                         </div>
+
+                        {/* Séparateur */}
+                        <span style={{ color: "#d1d5db" }}>•</span>
+
+                        {/* Date relative */}
+                        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <polyline points="12 6 12 12 16 14"></polyline>
+                          </svg>
+                          <span style={{ fontSize: "12px", color: "#6b7280" }}>
+                            {t.created_at ? getRelativeTime(t.created_at) : "N/A"}
+                          </span>
+                        </div>
+
+                        {/* Séparateur */}
+                        <span style={{ color: "#d1d5db" }}>•</span>
+
+                        {/* Agence */}
+                        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2">
+                            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                            <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                          </svg>
+                          <span style={{ fontSize: "12px", color: "#6b7280" }}>
+                            {t.creator ? (t.creator.agency || t.user_agency || "N/A") : (t.user_agency || "N/A")}
+                          </span>
+                        </div>
+
+                        {/* Flèche + Technicien assigné si présent */}
+                        {t.technician?.full_name && (
+                          <>
+                            {/* Flèche */}
+                            <span style={{ color: "#d1d5db" }}>→</span>
+
+                            {/* Avatar + Nom technicien */}
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                              <div style={{
+                                width: "20px",
+                                height: "20px",
+                                borderRadius: "50%",
+                                background: "rgba(250, 124, 21, 0.1)",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: "10px",
+                                fontWeight: "600",
+                                color: "#FA7C15",
+                                fontFamily: "Inter, system-ui, sans-serif",
+                              }}>
+                                {getInitials(t.technician.full_name)}
+                              </div>
+                              <span style={{ 
+                                fontSize: "12px", 
+                                color: "#0E1424", 
+                                fontWeight: "500",
+                                fontFamily: "Inter, system-ui, sans-serif",
+                              }}>
+                                {t.technician.full_name}
+                              </span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Espace vide pour l'alignement si besoin */}
+                      {!t.technician?.full_name && (
+                        <div></div>
                       )}
-                    </td>
-                  </tr>
-                ));
-              })()}
-            </tbody>
-          </table>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
         </>
       )}
 
@@ -6097,7 +6032,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           <div style={{ background: "white", borderRadius: "12px", padding: "20px", boxShadow: "0 6px 18px rgba(15,23,42,0.06)" }}>
             <h3 style={{ fontSize: "18px", fontWeight: 600, color: "#111827", marginBottom: "12px" }}>
               Volume de tickets (30 derniers jours)
-      </h3>
+            </h3>
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={prepareTimeSeriesData()}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -6832,7 +6767,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
                             <span style={{ fontSize: "14px", color: "#1f2937", fontFamily: "monospace", fontWeight: "600" }}>
-                              #{t.number}
+                              {formatTicketNumber(t.number)}
                             </span>
                             
                             {/* Badge Statut */}
@@ -6996,272 +6931,6 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                                     e.currentTarget.style.backgroundColor = "transparent";
                                   }}
                                 />
-                                {openActionsMenuFor === t.id && actionsMenuPosition && (
-                                  <div
-                                    data-menu-id={t.id}
-                                    style={{
-                                      position: "fixed",
-                                      top: actionsMenuPosition.top,
-                                      left: actionsMenuPosition.left,
-                                      background: "white",
-                                      border: "1px solid #e5e7eb",
-                                      borderRadius: 8,
-                                      boxShadow: "0 8px 16px rgba(0,0,0,0.1)",
-                                      minWidth: 180,
-                                      zIndex: 1000,
-                                      maxHeight: 280,
-                                      overflowY: "auto"
-                                    }}
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    {t.status === "en_attente_analyse" && (
-                                      <>
-                                        <button
-                                          onClick={() => { loadTicketDetails(t.id); setOpenActionsMenuFor(null); }}
-                                          disabled={loading}
-                                          style={{ 
-                                            width: "100%", 
-                                            padding: "10px 12px", 
-                                            background: "transparent", 
-                                            border: "none", 
-                                            textAlign: "left", 
-                                            cursor: "pointer",
-                                            color: "#111827",
-                                            fontSize: "14px",
-                                            display: "block",
-                                            whiteSpace: "nowrap"
-                                          }}
-                                          onMouseEnter={(e) => {
-                                            e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                          }}
-                                          onMouseLeave={(e) => {
-                                            e.currentTarget.style.backgroundColor = "transparent";
-                                          }}
-                                        >
-                                          Voir détails
-                                        </button>
-                                        <button
-                                          onClick={() => { handleAssignClick(t.id); setOpenActionsMenuFor(null); }}
-                                          disabled={loading}
-                                          style={{ 
-                                            width: "100%", 
-                                            padding: "10px 12px", 
-                                            background: "transparent", 
-                                            border: "none", 
-                                            borderTop: "1px solid #e5e7eb",
-                                            textAlign: "left", 
-                                            cursor: loading ? "not-allowed" : "pointer",
-                                            color: "#111827",
-                                            fontSize: "14px",
-                                            display: "block",
-                                            whiteSpace: "nowrap",
-                                            opacity: loading ? 0.6 : 1
-                                          }}
-                                          onMouseEnter={(e) => {
-                                            if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                          }}
-                                          onMouseLeave={(e) => {
-                                            e.currentTarget.style.backgroundColor = "transparent";
-                                          }}
-                                        >
-                                          Assigner
-                                        </button>
-                                        {userRole === "DSI" && (
-                                          <button
-                                            onClick={() => { handleDelegateClick(t.id); setOpenActionsMenuFor(null); }}
-                                            disabled={loading}
-                                            style={{ 
-                                              width: "100%", 
-                                              padding: "10px 12px", 
-                                              background: "transparent", 
-                                              border: "none", 
-                                              borderTop: "1px solid #e5e7eb",
-                                              textAlign: "left", 
-                                              cursor: loading ? "not-allowed" : "pointer",
-                                              color: "#111827",
-                                              fontSize: "14px",
-                                              display: "block",
-                                              whiteSpace: "nowrap",
-                                              opacity: loading ? 0.6 : 1
-                                            }}
-                                            onMouseEnter={(e) => {
-                                              if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                            }}
-                                            onMouseLeave={(e) => {
-                                              e.currentTarget.style.backgroundColor = "transparent";
-                                            }}
-                                          >
-                                            Déléguer à un adjoint
-                                          </button>
-                                        )}
-                                        {canEscalate() && (
-                                          <button
-                                            onClick={() => { handleEscalate(t.id); setOpenActionsMenuFor(null); }}
-                                            disabled={loading}
-                                            style={{ 
-                                              width: "100%", 
-                                              padding: "10px 12px", 
-                                              background: "transparent", 
-                                              border: "none", 
-                                              borderTop: "1px solid #e5e7eb",
-                                              textAlign: "left", 
-                                              cursor: loading ? "not-allowed" : "pointer",
-                                              color: "#111827",
-                                              fontSize: "14px",
-                                              display: "block",
-                                              whiteSpace: "nowrap",
-                                              opacity: loading ? 0.6 : 1
-                                            }}
-                                            onMouseEnter={(e) => {
-                                              if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                            }}
-                                            onMouseLeave={(e) => {
-                                              e.currentTarget.style.backgroundColor = "transparent";
-                                            }}
-                                          >
-                                            Escalader
-                                          </button>
-                                        )}
-                                      </>
-                                    )}
-                                    {(t.status === "assigne_technicien" || t.status === "en_cours") && (
-                                      <>
-                                        <button
-                                          onClick={() => { loadTicketDetails(t.id); setOpenActionsMenuFor(null); }}
-                                          disabled={loading}
-                                          style={{ 
-                                            width: "100%", 
-                                            padding: "10px 12px", 
-                                            background: "transparent", 
-                                            border: "none", 
-                                            textAlign: "left", 
-                                            cursor: "pointer",
-                                            color: "#111827",
-                                            fontSize: "14px",
-                                            display: "block",
-                                            whiteSpace: "nowrap"
-                                          }}
-                                          onMouseEnter={(e) => {
-                                            e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                          }}
-                                          onMouseLeave={(e) => {
-                                            e.currentTarget.style.backgroundColor = "transparent";
-                                          }}
-                                        >
-                                          Voir détails
-                                        </button>
-                                        <button
-                                          onClick={() => { handleReassignClick(t.id); setOpenActionsMenuFor(null); }}
-                                          disabled={loading}
-                                          style={{ 
-                                            width: "100%", 
-                                            padding: "10px 12px", 
-                                            background: "transparent", 
-                                            border: "none", 
-                                            borderTop: "1px solid #e5e7eb",
-                                            textAlign: "left", 
-                                            cursor: loading ? "not-allowed" : "pointer",
-                                            color: "#111827",
-                                            fontSize: "14px",
-                                            display: "block",
-                                            whiteSpace: "nowrap",
-                                            opacity: loading ? 0.6 : 1
-                                          }}
-                                          onMouseEnter={(e) => {
-                                            if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                          }}
-                                          onMouseLeave={(e) => {
-                                            e.currentTarget.style.backgroundColor = "transparent";
-                                          }}
-                                        >
-                                          Réassigner
-                                        </button>
-                                        {canEscalate() && (
-                                          <button
-                                            onClick={() => { handleEscalate(t.id); setOpenActionsMenuFor(null); }}
-                                            disabled={loading}
-                                            style={{ 
-                                              width: "100%", 
-                                              padding: "10px 12px", 
-                                              background: "transparent", 
-                                              border: "none", 
-                                              borderTop: "1px solid #e5e7eb",
-                                              textAlign: "left", 
-                                              cursor: loading ? "not-allowed" : "pointer",
-                                              color: "#111827",
-                                              fontSize: "14px",
-                                              display: "block",
-                                              whiteSpace: "nowrap",
-                                              opacity: loading ? 0.6 : 1
-                                            }}
-                                            onMouseEnter={(e) => {
-                                              if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                            }}
-                                            onMouseLeave={(e) => {
-                                              e.currentTarget.style.backgroundColor = "transparent";
-                                            }}
-                                          >
-                                            Escalader
-                                          </button>
-                                        )}
-                                      </>
-                                    )}
-                                    {t.status === "resolu" && (
-                                      <button
-                                        onClick={() => { handleClose(t.id); setOpenActionsMenuFor(null); }}
-                                        disabled={loading}
-                                        style={{ 
-                                          width: "100%", 
-                                          padding: "10px 12px", 
-                                          background: "transparent", 
-                                          border: "none", 
-                                          textAlign: "left", 
-                                          cursor: loading ? "not-allowed" : "pointer",
-                                          color: "#111827",
-                                          fontSize: "14px",
-                                          display: "block",
-                                          whiteSpace: "nowrap",
-                                          opacity: loading ? 0.6 : 1
-                                        }}
-                                        onMouseEnter={(e) => {
-                                          if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                        }}
-                                        onMouseLeave={(e) => {
-                                          e.currentTarget.style.backgroundColor = "transparent";
-                                        }}
-                                      >
-                                        Clôturer
-                                      </button>
-                                    )}
-                                    {t.status === "rejete" && (
-                                      <button
-                                        onClick={() => { handleReopenClick(t.id); setOpenActionsMenuFor(null); }}
-                                        disabled={loading}
-                                        style={{ 
-                                          width: "100%", 
-                                          padding: "10px 12px", 
-                                          background: "transparent", 
-                                          border: "none", 
-                                          textAlign: "left", 
-                                          cursor: loading ? "not-allowed" : "pointer",
-                                          color: "#111827",
-                                          fontSize: "14px",
-                                          display: "block",
-                                          whiteSpace: "nowrap",
-                                          opacity: loading ? 0.6 : 1
-                                        }}
-                                        onMouseEnter={(e) => {
-                                          if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
-                                        }}
-                                        onMouseLeave={(e) => {
-                                          e.currentTarget.style.backgroundColor = "transparent";
-                                        }}
-                                      >
-                                        Réouvrir
-                                      </button>
-                                    )}
-                                  </div>
-                                )}
                               </>
                             )}
                           </div>
@@ -13332,7 +13001,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                               color: "#333",
                               lineHeight: "1.5"
                             }}>
-                              Ticket #{ticket.number}
+                              Ticket {formatTicketNumber(ticket.number)}
                             </p>
                             <p style={{
                               margin: "4px 0 0 0",
@@ -13400,7 +13069,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                     background: "white",
                     borderRadius: "0 8px 0 0"
                   }}>
-                    <h3 style={{ margin: 0, fontSize: "18px", fontWeight: "600", color: "#333" }}>Détails du ticket #{selectedNotificationTicketDetails.number}</h3>
+                    <h3 style={{ margin: 0, fontSize: "18px", fontWeight: "600", color: "#333" }}>Détails du ticket {formatTicketNumber(selectedNotificationTicketDetails.number)}</h3>
                     {selectedNotificationTicketDetails.status === "rejete" && (
                       <span style={{
                         padding: "6px 10px",
@@ -13779,21 +13448,21 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "24px" }}>
                  <button
                    type="button"
-                   onClick={() => {
-                     setShowAddUserModal(false);
-                     setNewUser({
-                       full_name: "",
-                       email: "",
-                       phone: "",
-                       agency: "",
-                       role: "",
-                       status: "actif",
-                       password: "",
-                       confirmPassword: "",
-                       generateRandomPassword: true,
-                       sendEmail: true,
-                     });
-                   }}
+                  onClick={() => {
+                    setShowAddUserModal(false);
+                    setNewUser({
+                      full_name: "",
+                      email: "",
+                      phone: "",
+                      agency: "",
+                      role: "",
+                      actif: true,
+                      password: "",
+                      confirmPassword: "",
+                      generateRandomPassword: true,
+                      sendEmail: true,
+                    });
+                  }}
                    style={{ 
                      padding: "10px 20px", 
                      backgroundColor: "#6c757d", 
@@ -14244,7 +13913,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
               return ticket ? (
                 <div style={{ marginBottom: "20px", padding: "12px", background: "#f8f9fa", borderRadius: "4px" }}>
                   <div style={{ marginBottom: "8px" }}>
-                    <strong>Ticket #{ticket.number}:</strong> {ticket.title}
+                    <strong>Ticket {formatTicketNumber(ticket.number)}:</strong> {ticket.title}
                   </div>
                   {ticket.technician && (
                     <div style={{ fontSize: "14px", color: "#666" }}>
@@ -14388,7 +14057,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
               return ticket ? (
                 <div style={{ marginBottom: "20px", padding: "12px", background: "#f8f9fa", borderRadius: "4px" }}>
                   <div style={{ marginBottom: "8px" }}>
-                    <strong>Ticket #{ticket.number}:</strong> {ticket.title}
+                    <strong>Ticket {formatTicketNumber(ticket.number)}:</strong> {ticket.title}
                   </div>
                   <div style={{ fontSize: "14px", color: "#666" }}>
                     Type: <strong>{ticket.type === "materiel" ? "Matériel" : "Applicatif"}</strong>
@@ -14508,7 +14177,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
               return ticket ? (
                 <div style={{ marginBottom: "20px", padding: "12px", background: "#f8f9fa", borderRadius: "4px" }}>
                   <div style={{ marginBottom: "8px" }}>
-                    <strong>Ticket #{ticket.number}:</strong> {ticket.title}
+                    <strong>Ticket {formatTicketNumber(ticket.number)}:</strong> {ticket.title}
                   </div>
                   <div style={{ fontSize: "14px", color: "#666" }}>
                     Type: <strong>{ticket.type === "materiel" ? "Matériel" : "Applicatif"}</strong>
@@ -14864,7 +14533,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                               color: "#333",
                               lineHeight: "1.5"
                             }}>
-                              Ticket #{ticket.number}
+                              Ticket {formatTicketNumber(ticket.number)}
                             </p>
                             <p style={{
                               margin: "4px 0 0 0",
@@ -14928,7 +14597,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                     background: "white",
                     borderRadius: "0 8px 0 0"
                   }}>
-                    <h3 style={{ margin: 0 }}>Détails du ticket #{selectedNotificationTicketDetails.number}</h3>
+                    <h3 style={{ margin: 0 }}>Détails du ticket {formatTicketNumber(selectedNotificationTicketDetails.number)}</h3>
                   </div>
                   
                   <div style={{
@@ -15059,7 +14728,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
             maxHeight: "90vh",
             overflowY: "auto"
           }}>
-            <h3 style={{ marginBottom: "16px" }}>Détails du ticket #{ticketDetails.number}</h3>
+            <h3 style={{ marginBottom: "16px" }}>Détails du ticket {formatTicketNumber(ticketDetails.number)}</h3>
             <div style={{ marginBottom: "16px" }}>
               <strong>Titre :</strong>
               <p style={{ marginTop: "4px", padding: "8px", background: "#f8f9fa", borderRadius: "4px" }}>
@@ -15121,9 +14790,6 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
               <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "14px" }}>
                 {ticketDetails.created_at && (
                   <div>Créé le : {new Date(ticketDetails.created_at).toLocaleString("fr-FR")}</div>
-                )}
-                {ticketDetails.assigned_at && (
-                  <div>Assigné le : {new Date(ticketDetails.assigned_at).toLocaleString("fr-FR")}</div>
                 )}
                 {ticketDetails.resolved_at && (
                   <div>Résolu le : {new Date(ticketDetails.resolved_at).toLocaleString("fr-FR")}</div>
@@ -15203,6 +14869,552 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           </div>
         </div>
       )}
+
+      {/* Menu d'actions pour la section Dashboard (rendu au niveau racine pour éviter les problèmes d'overflow) */}
+      {activeSection === "dashboard" && openActionsMenuFor !== null && actionsMenuPosition !== null && (() => {
+        const ticket = allTickets.find(t => t.id === openActionsMenuFor);
+        if (!ticket) return null;
+        
+        return (
+          <div
+            data-menu-id={ticket.id}
+            style={{
+              position: "fixed",
+              top: actionsMenuPosition?.top || 0,
+              left: actionsMenuPosition?.left || 0,
+              background: "white",
+              border: "1px solid #e5e7eb",
+              borderRadius: 8,
+              boxShadow: "0 8px 16px rgba(0,0,0,0.15)",
+              minWidth: 180,
+              zIndex: 9999,
+              maxHeight: 280,
+              overflowY: "auto"
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {ticket.status === "en_attente_analyse" && (
+              <>
+                <button
+                  onClick={() => { loadTicketDetails(ticket.id); setOpenActionsMenuFor(null); }}
+                  disabled={loading}
+                  style={{ 
+                    width: "100%", 
+                    padding: "10px 12px", 
+                    background: "transparent", 
+                    border: "none", 
+                    textAlign: "left", 
+                    cursor: "pointer",
+                    color: "#111827",
+                    fontSize: "14px",
+                    display: "block",
+                    whiteSpace: "nowrap"
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = "#f3f4f6";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                  }}
+                >
+                  Voir détails
+                </button>
+                <button
+                  onClick={() => { handleAssignClick(ticket.id); setOpenActionsMenuFor(null); }}
+                  disabled={loading}
+                  style={{ 
+                    width: "100%", 
+                    padding: "10px 12px", 
+                    background: "transparent", 
+                    border: "none", 
+                    borderTop: "1px solid #e5e7eb",
+                    textAlign: "left", 
+                    cursor: loading ? "not-allowed" : "pointer",
+                    color: "#111827",
+                    fontSize: "14px",
+                    display: "block",
+                    whiteSpace: "nowrap",
+                    opacity: loading ? 0.6 : 1
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                  }}
+                >
+                  Assigner
+                </button>
+                {userRole === "DSI" && (
+                  <button
+                    onClick={() => { handleDelegateClick(ticket.id); setOpenActionsMenuFor(null); }}
+                    disabled={loading}
+                    style={{ 
+                      width: "100%", 
+                      padding: "10px 12px", 
+                      background: "transparent", 
+                      border: "none", 
+                      borderTop: "1px solid #e5e7eb",
+                      textAlign: "left", 
+                      cursor: loading ? "not-allowed" : "pointer",
+                      color: "#111827",
+                      fontSize: "14px",
+                      display: "block",
+                      whiteSpace: "nowrap",
+                      opacity: loading ? 0.6 : 1
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "transparent";
+                    }}
+                  >
+                    Déléguer à un adjoint
+                  </button>
+                )}
+                {canEscalate() && (
+                  <button
+                    onClick={() => { handleEscalate(ticket.id); setOpenActionsMenuFor(null); }}
+                    disabled={loading}
+                    style={{ 
+                      width: "100%", 
+                      padding: "10px 12px", 
+                      background: "transparent", 
+                      border: "none", 
+                      borderTop: "1px solid #e5e7eb",
+                      textAlign: "left", 
+                      cursor: loading ? "not-allowed" : "pointer",
+                      color: "#111827",
+                      fontSize: "14px",
+                      display: "block",
+                      whiteSpace: "nowrap",
+                      opacity: loading ? 0.6 : 1
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "transparent";
+                    }}
+                  >
+                    Escalader
+                  </button>
+                )}
+              </>
+            )}
+            {(ticket.status === "assigne_technicien" || ticket.status === "en_cours") && (
+              <>
+                <button
+                  onClick={() => { loadTicketDetails(ticket.id); setOpenActionsMenuFor(null); }}
+                  disabled={loading}
+                  style={{ 
+                    width: "100%", 
+                    padding: "10px 12px", 
+                    background: "transparent", 
+                    border: "none", 
+                    textAlign: "left", 
+                    cursor: "pointer",
+                    color: "#111827",
+                    fontSize: "14px",
+                    display: "block",
+                    whiteSpace: "nowrap"
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = "#f3f4f6";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                  }}
+                >
+                  Voir détails
+                </button>
+                <button
+                  onClick={() => { handleReassignClick(ticket.id); setOpenActionsMenuFor(null); }}
+                  disabled={loading}
+                  style={{ 
+                    width: "100%", 
+                    padding: "10px 12px", 
+                    background: "transparent", 
+                    border: "none", 
+                    borderTop: "1px solid #e5e7eb",
+                    textAlign: "left", 
+                    cursor: loading ? "not-allowed" : "pointer",
+                    color: "#111827",
+                    fontSize: "14px",
+                    display: "block",
+                    whiteSpace: "nowrap",
+                    opacity: loading ? 0.6 : 1
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                  }}
+                >
+                  Réassigner
+                </button>
+                {canEscalate() && (
+                  <button
+                    onClick={() => { handleEscalate(ticket.id); setOpenActionsMenuFor(null); }}
+                    disabled={loading}
+                    style={{ 
+                      width: "100%", 
+                      padding: "10px 12px", 
+                      background: "transparent", 
+                      border: "none", 
+                      borderTop: "1px solid #e5e7eb",
+                      textAlign: "left", 
+                      cursor: loading ? "not-allowed" : "pointer",
+                      color: "#111827",
+                      fontSize: "14px",
+                      display: "block",
+                      whiteSpace: "nowrap",
+                      opacity: loading ? 0.6 : 1
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "transparent";
+                    }}
+                  >
+                    Escalader
+                  </button>
+                )}
+              </>
+            )}
+            {ticket.status === "resolu" && (
+              <button
+                onClick={() => { handleClose(ticket.id); setOpenActionsMenuFor(null); }}
+                disabled={loading}
+                style={{ 
+                  width: "100%", 
+                  padding: "10px 12px", 
+                  background: "transparent", 
+                  border: "none", 
+                  textAlign: "left", 
+                  cursor: loading ? "not-allowed" : "pointer",
+                  color: "#111827",
+                  fontSize: "14px",
+                  display: "block",
+                  whiteSpace: "nowrap",
+                  opacity: loading ? 0.6 : 1
+                }}
+                onMouseEnter={(e) => {
+                  if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                }}
+              >
+                Clôturer
+              </button>
+            )}
+            {ticket.status === "rejete" && (
+              <button
+                onClick={() => { handleReopenClick(ticket.id); setOpenActionsMenuFor(null); }}
+                disabled={loading}
+                style={{ 
+                  width: "100%", 
+                  padding: "10px 12px", 
+                  background: "transparent", 
+                  border: "none", 
+                  textAlign: "left", 
+                  cursor: loading ? "not-allowed" : "pointer",
+                  color: "#111827",
+                  fontSize: "14px",
+                  display: "block",
+                  whiteSpace: "nowrap",
+                  opacity: loading ? 0.6 : 1
+                }}
+                onMouseEnter={(e) => {
+                  if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                }}
+              >
+                Rouvrir
+              </button>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Menu d'actions pour la section Tickets (rendu au niveau racine pour éviter les problèmes d'overflow) */}
+      {activeSection === "tickets" && openActionsMenuFor !== null && actionsMenuPosition !== null && (() => {
+        const ticket = allTickets.find(t => t.id === openActionsMenuFor);
+        if (!ticket) return null;
+        
+        return (
+          <div
+            data-menu-id={ticket.id}
+            style={{
+              position: "fixed",
+              top: actionsMenuPosition?.top || 0,
+              left: actionsMenuPosition?.left || 0,
+              background: "white",
+              border: "1px solid #e5e7eb",
+              borderRadius: 8,
+              boxShadow: "0 8px 16px rgba(0,0,0,0.15)",
+              minWidth: 180,
+              zIndex: 9999,
+              maxHeight: 280,
+              overflowY: "auto"
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {ticket.status === "en_attente_analyse" && (
+              <>
+                <button
+                  onClick={() => { loadTicketDetails(ticket.id); setOpenActionsMenuFor(null); }}
+                  disabled={loading}
+                  style={{ 
+                    width: "100%", 
+                    padding: "10px 12px", 
+                    background: "transparent", 
+                    border: "none", 
+                    textAlign: "left", 
+                    cursor: "pointer",
+                    color: "#111827",
+                    fontSize: "14px",
+                    display: "block",
+                    whiteSpace: "nowrap"
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = "#f3f4f6";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                  }}
+                >
+                  Voir détails
+                </button>
+                <button
+                  onClick={() => { handleAssignClick(ticket.id); setOpenActionsMenuFor(null); }}
+                  disabled={loading}
+                  style={{ 
+                    width: "100%", 
+                    padding: "10px 12px", 
+                    background: "transparent", 
+                    border: "none", 
+                    borderTop: "1px solid #e5e7eb",
+                    textAlign: "left", 
+                    cursor: loading ? "not-allowed" : "pointer",
+                    color: "#111827",
+                    fontSize: "14px",
+                    display: "block",
+                    whiteSpace: "nowrap",
+                    opacity: loading ? 0.6 : 1
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                  }}
+                >
+                  Assigner
+                </button>
+                {userRole === "DSI" && (
+                  <button
+                    onClick={() => { handleDelegateClick(ticket.id); setOpenActionsMenuFor(null); }}
+                    disabled={loading}
+                    style={{ 
+                      width: "100%", 
+                      padding: "10px 12px", 
+                      background: "transparent", 
+                      border: "none", 
+                      borderTop: "1px solid #e5e7eb",
+                      textAlign: "left", 
+                      cursor: loading ? "not-allowed" : "pointer",
+                      color: "#111827",
+                      fontSize: "14px",
+                      display: "block",
+                      whiteSpace: "nowrap",
+                      opacity: loading ? 0.6 : 1
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "transparent";
+                    }}
+                  >
+                    Déléguer à un adjoint
+                  </button>
+                )}
+                {canEscalate() && (
+                  <button
+                    onClick={() => { handleEscalate(ticket.id); setOpenActionsMenuFor(null); }}
+                    disabled={loading}
+                    style={{ 
+                      width: "100%", 
+                      padding: "10px 12px", 
+                      background: "transparent", 
+                      border: "none", 
+                      borderTop: "1px solid #e5e7eb",
+                      textAlign: "left", 
+                      cursor: loading ? "not-allowed" : "pointer",
+                      color: "#111827",
+                      fontSize: "14px",
+                      display: "block",
+                      whiteSpace: "nowrap",
+                      opacity: loading ? 0.6 : 1
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "transparent";
+                    }}
+                  >
+                    Escalader
+                  </button>
+                )}
+              </>
+            )}
+            {(ticket.status === "assigne_technicien" || ticket.status === "en_cours") && (
+              <>
+                <button
+                  onClick={() => { loadTicketDetails(ticket.id); setOpenActionsMenuFor(null); }}
+                  disabled={loading}
+                  style={{ 
+                    width: "100%", 
+                    padding: "10px 12px", 
+                    background: "transparent", 
+                    border: "none", 
+                    textAlign: "left", 
+                    cursor: "pointer",
+                    color: "#111827",
+                    fontSize: "14px",
+                    display: "block",
+                    whiteSpace: "nowrap"
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = "#f3f4f6";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                  }}
+                >
+                  Voir détails
+                </button>
+                <button
+                  onClick={() => { handleReassignClick(ticket.id); setOpenActionsMenuFor(null); }}
+                  disabled={loading}
+                  style={{ 
+                    width: "100%", 
+                    padding: "10px 12px", 
+                    background: "transparent", 
+                    border: "none", 
+                    borderTop: "1px solid #e5e7eb",
+                    textAlign: "left", 
+                    cursor: loading ? "not-allowed" : "pointer",
+                    color: "#111827",
+                    fontSize: "14px",
+                    display: "block",
+                    whiteSpace: "nowrap",
+                    opacity: loading ? 0.6 : 1
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                  }}
+                >
+                  Réassigner
+                </button>
+                {canEscalate() && (
+                  <button
+                    onClick={() => { handleEscalate(ticket.id); setOpenActionsMenuFor(null); }}
+                    disabled={loading}
+                    style={{ 
+                      width: "100%", 
+                      padding: "10px 12px", 
+                      background: "transparent", 
+                      border: "none", 
+                      borderTop: "1px solid #e5e7eb",
+                      textAlign: "left", 
+                      cursor: loading ? "not-allowed" : "pointer",
+                      color: "#111827",
+                      fontSize: "14px",
+                      display: "block",
+                      whiteSpace: "nowrap",
+                      opacity: loading ? 0.6 : 1
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "transparent";
+                    }}
+                  >
+                    Escalader
+                  </button>
+                )}
+              </>
+            )}
+            {ticket.status === "resolu" && (
+              <button
+                onClick={() => { handleClose(ticket.id); setOpenActionsMenuFor(null); }}
+                disabled={loading}
+                style={{ 
+                  width: "100%", 
+                  padding: "10px 12px", 
+                  background: "transparent", 
+                  border: "none", 
+                  textAlign: "left", 
+                  cursor: loading ? "not-allowed" : "pointer",
+                  color: "#111827",
+                  fontSize: "14px",
+                  display: "block",
+                  whiteSpace: "nowrap",
+                  opacity: loading ? 0.6 : 1
+                }}
+                onMouseEnter={(e) => {
+                  if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                }}
+              >
+                Clôturer
+              </button>
+            )}
+            {ticket.status === "rejete" && (
+              <button
+                onClick={() => { handleReopenClick(ticket.id); setOpenActionsMenuFor(null); }}
+                disabled={loading}
+                style={{ 
+                  width: "100%", 
+                  padding: "10px 12px", 
+                  background: "transparent", 
+                  border: "none", 
+                  textAlign: "left", 
+                  cursor: loading ? "not-allowed" : "pointer",
+                  color: "#111827",
+                  fontSize: "14px",
+                  display: "block",
+                  whiteSpace: "nowrap",
+                  opacity: loading ? 0.6 : 1
+                }}
+                onMouseEnter={(e) => {
+                  if (!loading) e.currentTarget.style.backgroundColor = "#f3f4f6";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                }}
+              >
+                Réouvrir
+              </button>
+            )}
+          </div>
+        );
+      })()}
     </div>
     </div>
   );
