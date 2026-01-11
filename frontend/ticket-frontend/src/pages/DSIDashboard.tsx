@@ -5479,7 +5479,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           style={{
             background: "white",
             borderRadius: "12px",
-            padding: "14px 16px",
+            padding: "18px 20px",
             boxShadow: "0 6px 18px rgba(15,23,42,0.08)",
             position: "relative",
             overflow: "hidden",
@@ -5509,8 +5509,8 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           <div
             style={{
               position: "absolute",
-              right: "14px",
-              top: "14px",
+              right: "16px",
+              top: "16px",
               width: "40px",
               height: "40px",
               borderRadius: "10px",
@@ -5524,18 +5524,18 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           </div>
           <div
             style={{
-              fontSize: "20px",
+              fontSize: "24px",
               fontWeight: 700,
               color: "#111827",
-              marginBottom: "3px",
+              marginBottom: "4px",
             }}
           >
             {pendingCount}
           </div>
-          <div style={{ fontSize: "11px", fontWeight: 500, color: "#374151" }}>
+          <div style={{ fontSize: "12px", fontWeight: 500, color: "#374151" }}>
             Tickets à assigner
           </div>
-          <div style={{ marginTop: "2px", fontSize: "10px", color: "#6b7280" }}>
+          <div style={{ marginTop: "3px", fontSize: "11px", color: "#6b7280" }}>
             Action requise
           </div>
         </div>
@@ -5545,7 +5545,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           style={{
             background: "white",
             borderRadius: "12px",
-            padding: "14px 16px",
+            padding: "18px 20px",
             boxShadow: "0 6px 18px rgba(15,23,42,0.08)",
             position: "relative",
             overflow: "hidden",
@@ -5575,8 +5575,8 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           <div
             style={{
               position: "absolute",
-              right: "14px",
-              top: "14px",
+              right: "16px",
+              top: "16px",
               width: "40px",
               height: "40px",
               borderRadius: "10px",
@@ -5590,18 +5590,18 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           </div>
           <div
             style={{
-              fontSize: "20px",
+              fontSize: "24px",
               fontWeight: 700,
               color: "#111827",
-              marginBottom: "3px",
+              marginBottom: "4px",
             }}
           >
             {activeTechniciansCount}
           </div>
-          <div style={{ fontSize: "11px", fontWeight: 500, color: "#374151" }}>
+          <div style={{ fontSize: "12px", fontWeight: 500, color: "#374151" }}>
             Techniciens disponibles
           </div>
-          <div style={{ marginTop: "2px", fontSize: "10px", color: "#6b7280" }}>
+          <div style={{ marginTop: "3px", fontSize: "11px", color: "#6b7280" }}>
             Sur {technicians.length || 0} au total
           </div>
         </div>
@@ -5611,7 +5611,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           style={{
             background: "white",
             borderRadius: "12px",
-            padding: "14px 16px",
+            padding: "18px 20px",
             boxShadow: "0 6px 18px rgba(15,23,42,0.08)",
             position: "relative",
             overflow: "hidden",
@@ -5641,8 +5641,8 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           <div
             style={{
               position: "absolute",
-              right: "14px",
-              top: "14px",
+              right: "16px",
+              top: "16px",
               width: "40px",
               height: "40px",
               borderRadius: "10px",
@@ -5656,18 +5656,18 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           </div>
           <div
             style={{
-              fontSize: "20px",
+              fontSize: "24px",
               fontWeight: 700,
               color: "#111827",
-              marginBottom: "3px",
+              marginBottom: "4px",
             }}
           >
             {metrics.avgResolutionTime ?? "Chargement..."}
           </div>
-          <div style={{ fontSize: "11px", fontWeight: 500, color: "#374151" }}>
+          <div style={{ fontSize: "12px", fontWeight: 500, color: "#374151" }}>
             Temps moyen
           </div>
-          <div style={{ marginTop: "2px", fontSize: "10px", color: "#16a34a" }}>
+          <div style={{ marginTop: "3px", fontSize: "11px", color: "#16a34a" }}>
             {/* Variation fictive pour l&apos;instant */}
             ↗ -15% ce mois
           </div>
@@ -5678,7 +5678,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           style={{
             background: "white",
             borderRadius: "12px",
-            padding: "14px 16px",
+            padding: "18px 20px",
             boxShadow: "0 6px 18px rgba(15,23,42,0.08)",
             position: "relative",
             overflow: "hidden",
@@ -5708,8 +5708,8 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           <div
             style={{
               position: "absolute",
-              right: "14px",
-              top: "14px",
+              right: "16px",
+              top: "16px",
               width: "40px",
               height: "40px",
               borderRadius: "10px",
@@ -5723,18 +5723,18 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           </div>
           <div
             style={{
-              fontSize: "20px",
+              fontSize: "24px",
               fontWeight: 700,
               color: "#111827",
-              marginBottom: "3px",
+              marginBottom: "4px",
             }}
           >
             {metrics.userSatisfaction ?? "Chargement..."}
           </div>
-          <div style={{ fontSize: "11px", fontWeight: 500, color: "#374151" }}>
+          <div style={{ fontSize: "12px", fontWeight: 500, color: "#374151" }}>
             Satisfaction client
           </div>
-          <div style={{ marginTop: "2px", fontSize: "10px", color: "#16a34a" }}>
+          <div style={{ marginTop: "3px", fontSize: "11px", color: "#16a34a" }}>
             {/* Variation fictive pour l&apos;instant */}
             ↗ +0.3 ce mois
           </div>
@@ -5745,7 +5745,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           style={{
             background: "white",
             borderRadius: "12px",
-            padding: "14px 16px",
+            padding: "18px 20px",
             boxShadow: "0 6px 18px rgba(15,23,42,0.08)",
             position: "relative",
             overflow: "hidden",
@@ -5775,8 +5775,8 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           <div
             style={{
               position: "absolute",
-              right: "14px",
-              top: "14px",
+              right: "16px",
+              top: "16px",
               width: "40px",
               height: "40px",
               borderRadius: "10px",
@@ -5790,18 +5790,18 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           </div>
           <div
             style={{
-              fontSize: "20px",
+              fontSize: "24px",
               fontWeight: 700,
               color: "#111827",
-              marginBottom: "3px",
+              marginBottom: "4px",
             }}
           >
             {totalTicketsCount}
           </div>
-          <div style={{ fontSize: "11px", fontWeight: 500, color: "#374151" }}>
+          <div style={{ fontSize: "12px", fontWeight: 500, color: "#374151" }}>
             Volume total
           </div>
-          <div style={{ marginTop: "2px", fontSize: "10px", color: "#6b7280" }}>
+          <div style={{ marginTop: "3px", fontSize: "11px", color: "#6b7280" }}>
             Ce mois
           </div>
         </div>
@@ -5811,7 +5811,7 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           style={{
             background: "white",
             borderRadius: "12px",
-            padding: "14px 16px",
+            padding: "18px 20px",
             boxShadow: "0 6px 18px rgba(15,23,42,0.08)",
             position: "relative",
             overflow: "hidden",
@@ -5841,8 +5841,8 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           <div
             style={{
               position: "absolute",
-              right: "14px",
-              top: "14px",
+              right: "16px",
+              top: "16px",
               width: "40px",
               height: "40px",
               borderRadius: "10px",
@@ -5856,18 +5856,18 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           </div>
           <div
             style={{
-              fontSize: "20px",
+              fontSize: "24px",
               fontWeight: 700,
               color: "#111827",
-              marginBottom: "3px",
+              marginBottom: "4px",
             }}
           >
             {resolutionRate}
           </div>
-          <div style={{ fontSize: "11px", fontWeight: 500, color: "#374151" }}>
+          <div style={{ fontSize: "12px", fontWeight: 500, color: "#374151" }}>
             Taux de résolution
           </div>
-          <div style={{ marginTop: "2px", fontSize: "10px", color: "#16a34a" }}>
+          <div style={{ marginTop: "3px", fontSize: "11px", color: "#16a34a" }}>
             +2% (indicatif)
           </div>
         </div>
