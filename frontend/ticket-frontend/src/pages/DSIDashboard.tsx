@@ -5115,52 +5115,6 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
           {/* Right side - Icons */}
           <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
           
-          {/* Icône boîte de réception - tickets à assigner */}
-          <div
-            style={{
-              cursor: "default",
-              width: "32px",
-              height: "32px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#000000",
-              position: "relative",
-              opacity: pendingCount > 0 ? 1 : 0.5,
-            }}
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="4" y="6" width="16" height="12" rx="1" />
-              <circle cx="4" cy="10" r="1" fill="#000000" />
-              <circle cx="4" cy="14" r="1" fill="#000000" />
-              <circle cx="20" cy="10" r="1" fill="#000000" />
-              <circle cx="20" cy="14" r="1" fill="#000000" />
-            </svg>
-            {pendingCount > 0 && (
-              <span
-                style={{
-                  position: "absolute",
-                  top: "-4px",
-                  right: "-4px",
-                  minWidth: "18px",
-                  height: "18px",
-                  background: "#22c55e",
-                  borderRadius: "50%",
-                  border: "2px solid white",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "11px",
-                  fontWeight: "bold",
-                  color: "white",
-                  padding: "0 4px",
-                }}
-              >
-                {pendingCount > 99 ? "99+" : pendingCount}
-              </span>
-            )}
-          </div>
-
           {/* Barre de recherche */}
           <div style={{ 
             display: "flex", 
@@ -5211,6 +5165,52 @@ Les données détaillées seront disponibles dans une prochaine version.</pre>
                 e.currentTarget.style.backgroundColor = "#f9fafb";
               }}
             />
+          </div>
+
+          {/* Icône boîte de réception - tickets à assigner */}
+          <div
+            style={{
+              cursor: "default",
+              width: "32px",
+              height: "32px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#000000",
+              position: "relative",
+              opacity: pendingCount > 0 ? 1 : 0.5,
+            }}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="4" y="6" width="16" height="12" rx="1" />
+              <circle cx="4" cy="10" r="1" fill="#000000" />
+              <circle cx="4" cy="14" r="1" fill="#000000" />
+              <circle cx="20" cy="10" r="1" fill="#000000" />
+              <circle cx="20" cy="14" r="1" fill="#000000" />
+            </svg>
+            {pendingCount > 0 && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: "-4px",
+                  right: "-4px",
+                  minWidth: "18px",
+                  height: "18px",
+                  background: "#22c55e",
+                  borderRadius: "50%",
+                  border: "2px solid white",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "11px",
+                  fontWeight: "bold",
+                  color: "white",
+                  padding: "0 4px",
+                }}
+              >
+                {pendingCount > 99 ? "99+" : pendingCount}
+              </span>
+            )}
           </div>
 
           {/* Cloche notifications */}
